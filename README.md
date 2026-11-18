@@ -22,14 +22,14 @@ The codebase is modularized so two developers can work simultaneously in separat
 
 | Module / File | Owner | Responsibilities |
 | :--- | :--- | :--- |
-| `src/shared/Constants.hpp` | **Shared Contract** | Arena dimensions (`1280x720`), 60Hz tick rate, UDP port `7777`, ship/bullet speeds, 3 max HP. |
-| `src/shared/Protocol.hpp` | **Shared Contract** | Byte-packed UDP network packets (`InputPacket`, `ShipState`, `BulletState`, `GameState`). |
-| `src/graphics/Renderer.hpp` / `.cpp` | **Developer A (Graphics & Shaders)** | Raylib window setup, shader uniforms, vector-style neon ships, engine thrust particles, HUD health bars, and `RenderTexture2D` post-processing pipeline. |
+| `src/shared/Constants.hpp` | **Shared Contract** | Arena dimensions (`1920x1080`), 60Hz tick rate, UDP port `7777`, ship/bullet/comet/power-up constants, 3 max HP. |
+| `src/shared/Protocol.hpp` | **Shared Contract** | Byte-packed UDP network packets (`InputPacket`, `ShipState`, `BulletState`, `CometState`, `PowerUpState`, `GameState`). |
+| `src/graphics/Renderer.hpp` / `.cpp` | **Developer A (Graphics & Shaders)** | Customizable resolution & Fullscreen, shader uniforms, vector ships, low-HP red vibration flash, comets, power-up badges, thrust particles, HUD health bars, and `RenderTexture2D` bloom pass. |
 | `assets/shaders/background.fs` | **Developer A (Graphics & Shaders)** | GLSL 330 procedural parallax scrolling starfield, subtle dual-tone FBM nebula, and cyber grid (`uTime`, `uResolution`). |
 | `assets/shaders/postprocess.fs` | **Developer A (Graphics & Shaders)** | GLSL 330 multi-sample neon glow/bloom, subtle CRT scanlines, radial chromatic aberration, and vignette. |
-| `src/network/NetworkManager.hpp` / `.cpp` | **Developer B (Networking & Gameplay)** | ENet Host & Client UDP lifecycle on port `7777`, non-blocking packet polling, input streaming, and state broadcasting. |
-| `src/game/Simulation.hpp` / `.cpp` | **Developer B (Networking & Gameplay)** | Server-authoritative 2D physics: ship rotation/thrust, screen-edge bounce/clamping, projectile spawning, circle collisions, 3 HP tracking, and round resets. |
-| `src/main.cpp` | **Shared Integration** | Start menu (Host / Join via IP) and 60Hz main loop bridging `NetworkManager`, `Simulation`, and `Renderer`. |
+| `src/network/NetworkManager.hpp` / `.cpp` | **Developer B (Networking & Gameplay)** | ENet Host & Client UDP lifecycle on port `7777`, unsequenced low-latency packet streaming, and compact state broadcasting. |
+| `src/game/Simulation.hpp` / `.cpp` | **Developer B (Networking & Gameplay)** | Server-authoritative 2D physics: ship rotation/thrust, comets, 6 random power-ups, circle collisions, 3 HP tracking, round resets, and client prediction helpers. |
+| `src/main.cpp` | **Shared Integration** | Start menu (Host / Join via IP + Resolution / Fullscreen selector) and fixed-60Hz loop with Client-Side Prediction & Reconciliation. |
 
 ---
 
@@ -79,10 +79,25 @@ Open two terminal windows in the project root (or launch the executable twice):
 
 ---
 
-## Controls & Rules
+## Controls, Power-Ups & Arena Hazards
 
+### Controls
 - **Thrust Forward / Reverse:** `W` / `S` or `Up Arrow` / `Down Arrow`
 - **Rotate Left / Right:** `A` / `D` or `Left Arrow` / `Right Arrow`
 - **Fire Projectile:** `SPACE`
+- **Change Resolution (Menu):** `R` or `Left Arrow` / `Right Arrow` (`1280x720`, `1600x900`, `1920x1080`, `2560x1440`)
+- **Toggle Fullscreen / Windowed:** `F11` (anytime) or `F` (on start menu)
 - **Disconnect / Return to Menu:** `ESC`
-- **Match Rules:** Each ship starts a round with **3 HP**. Hitting the opponent 3 times scores **1 point** for the attacker and automatically resets both ships and restores full HP for the next round.
+
+### Arena Hazards & Visual Alerts
+- **Expanded 1920x1080 Arena:** Full HD virtual coordinate space scaled cleanly to any windowed or fullscreen display.
+- **Random Comets:** Fiery comets periodically traverse the arena along random trajectory vectors with individual lifetimes (capped at max 3 simultaneously). Colliding with a comet deals 1 HP damage and shatters the comet.
+- **Low-Health Warning:** At `1 HP`, a player's ship vibrates rapidly and flashes in neon crimson red.
+
+### Power-Ups (Max 2 on Map, 6-Second Map Lifetime)
+1. **`FR+` — Fire Rate Boost:** Increases firing rate by **+30%** for **10 seconds**.
+2. **`SPD` — Ship Speed Boost:** Increases max ship speed & thrust by **+30%** for **10 seconds**.
+3. **`SGN` — Shotgun:** The next **3 shots** fire a 3-bullet spread fan.
+4. **`INV` — Stealth & Immortal:** Ship becomes **invisible** to the opponent and **immortal** for **6 seconds**, but **cannot fire** while cloaked.
+5. **`BNC` — Bouncy Bullets:** In the next **6 shots**, bullets ricochet off arena walls until they decay after **5 seconds**.
+6. **`+HP` — Extra Life:** Restores **+1 HP** (if already at `3 HP`, it can still be picked up to deny the opponent without exceeding `3 HP`).
