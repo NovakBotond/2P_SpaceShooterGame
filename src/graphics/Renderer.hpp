@@ -48,6 +48,7 @@ public:
                     bool isHost,
                     bool isConnected,
                     const std::string& statusMessage,
+                    uint32_t pingMs,
                     float dt);
 
 private:
@@ -60,7 +61,7 @@ private:
     void drawParticles();
     void drawVectorShip(const ShipState& ship, int playerId);
     void drawBullets(const GameState& state);
-    void drawHUD(const GameState& state, bool isHost, bool isConnected, const std::string& statusMessage);
+    void drawHUD(const GameState& state, bool isHost, bool isConnected, const std::string& statusMessage, uint32_t pingMs);
 
     bool            m_initialized      = false;
     RenderTexture2D m_sceneTarget{};

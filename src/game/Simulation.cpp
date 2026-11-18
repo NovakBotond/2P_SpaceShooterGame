@@ -2,7 +2,8 @@
 // OWNER: Developer B (Networking & Gameplay Logic)
 // FILE:  src/game/Simulation.cpp
 // DESC:  Implementation of server-authoritative 2D physics, projectiles,
-//        circle-based collisions, HP tracking, and round reset logic.
+//        circle-based collisions, HP tracking, round reset logic, and shared
+//        client-side prediction helpers.
 // =============================================================================
 
 #include "game/Simulation.hpp"
@@ -20,6 +21,29 @@ namespace {
         const float radiusSum = r1 + r2;
         return (dx * dx + dy * dy) <= (radiusSum * radiusSum);
     }
+
+    void clampAndBounceShip(ShipState& ship) {
+        const float minX = Constants::ARENA_BORDER_PADDING + Constants::SHIP_RADIUS;
+        const float maxX = Constants::ARENA_WIDTH_F - Constants::ARENA_BORDER_PADDING - Constants::SHIP_RADIUS;
+        const float minY = Constants::ARENA_BORDER_PADDING + Constants::SHIP_RADIUS;
+        const float maxY = Constants::ARENA_HEIGHT_F - Constants::ARENA_BORDER_PADDING - Constants::SHIP_RADIUS;
+
+        if (ship.x < minX) {
+            ship.x = minX;
+            ship.vx = std::abs(ship.vx) * Constants::SHIP_BOUNCE_DAMPING;
+        } else if (ship.x > maxX) {
+            ship.x = maxX;
+            ship.vx = -std::abs(ship.vx) * Constants::SHIP_BOUNCE_DAMPING;
+        }
+
+        if (ship.y < minY) {
+            ship.y = minY;
+            ship.vy = std::abs(ship.vy) * Constants::SHIP_BOUNCE_DAMPING;
+        } else if (ship.y > maxY) {
+            ship.y = maxY;
+            ship.vy = -std::abs(ship.vy) * Constants::SHIP_BOUNCE_DAMPING;
+        }
+    }
 }
 
 Simulation::Simulation() {
@@ -30,6 +54,7 @@ void Simulation::resetMatch() {
     m_state = GameState{};
     m_state.packetType = static_cast<uint8_t>(PacketType::GAME_STATE);
     m_state.tick = 0;
+    m_state.lastClientTick = 0;
     m_state.lastRoundWinner = 255;
     m_state.roundBannerTimer = 0.0f;
 
@@ -73,36 +98,53 @@ void Simulation::resetRound() {
     m_fireCooldowns[1] = 0.0f;
 }
 
-void Simulation::update(float dt, const InputPacket& hostInput, const InputPacket& clientInput) {
-    m_state.tick++;
-
-    if (m_state.roundBannerTimer > 0.0f) {
-        m_state.roundBannerTimer = std::max(0.0f, m_state.roundBannerTimer - dt);
+float Simulation::shortestAngleDiff(float from, float to) {
+    float diff = std::fmod(to - from + PI_VAL, TWO_PI);
+    if (diff < 0.0f) {
+        diff += TWO_PI;
     }
-
-    // 1. Update both players' ships
-    updateShip(0, hostInput, dt);
-    updateShip(1, clientInput, dt);
-
-    // 2. Advance active projectiles
-    updateBullets(dt);
-
-    // 3. Perform circle-based collision detection & round-end evaluation
-    resolveCollisions();
+    return diff - PI_VAL;
 }
 
-void Simulation::updateShip(int playerId, const InputPacket& input, float dt) {
-    if (playerId < 0 || playerId >= Constants::MAX_PLAYERS) {
-        return;
+GameState Simulation::interpolateState(const GameState& prev, const GameState& curr, float alpha) {
+    const float t = std::clamp(alpha, 0.0f, 1.0f);
+    GameState out = curr;
+
+    for (int i = 0; i < Constants::MAX_PLAYERS; ++i) {
+        const ShipState& p = prev.ships[i];
+        const ShipState& c = curr.ships[i];
+        if (!p.active || !c.active) {
+            continue;
+        }
+        const float dx = c.x - p.x;
+        const float dy = c.y - p.y;
+        if (dx * dx + dy * dy < 70.0f * 70.0f) {
+            out.ships[i].x     = p.x + dx * t;
+            out.ships[i].y     = p.y + dy * t;
+            out.ships[i].angle = p.angle + shortestAngleDiff(p.angle, c.angle) * t;
+        }
     }
 
-    ShipState& ship = m_state.ships[playerId];
+    for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
+        const BulletState& p = prev.bullets[i];
+        const BulletState& c = curr.bullets[i];
+        if (!p.active || !c.active || p.ownerId != c.ownerId) {
+            continue;
+        }
+        const float dx = c.x - p.x;
+        const float dy = c.y - p.y;
+        if (dx * dx + dy * dy < 60.0f * 60.0f) {
+            out.bullets[i].x = p.x + dx * t;
+            out.bullets[i].y = p.y + dy * t;
+        }
+    }
+
+    return out;
+}
+
+void Simulation::stepShipPhysics(ShipState& ship, const InputPacket& input, float dt) {
     if (!ship.active) {
         return;
-    }
-
-    if (m_fireCooldowns[playerId] > 0.0f) {
-        m_fireCooldowns[playerId] = std::max(0.0f, m_fireCooldowns[playerId] - dt);
     }
 
     // Rotation (A/D or Left/Right Arrow)
@@ -148,31 +190,87 @@ void Simulation::updateShip(int playerId, const InputPacket& input, float dt) {
         ship.vy *= invSpeed;
     }
 
-    // Integrate position
+    // Integrate position and bounce off arena perimeter
     ship.x += ship.vx * dt;
     ship.y += ship.vy * dt;
+    clampAndBounceShip(ship);
+}
 
-    // Screen-edge clamping & velocity bouncing inside the arena perimeter
-    const float minX = Constants::ARENA_BORDER_PADDING + Constants::SHIP_RADIUS;
-    const float maxX = Constants::ARENA_WIDTH_F - Constants::ARENA_BORDER_PADDING - Constants::SHIP_RADIUS;
-    const float minY = Constants::ARENA_BORDER_PADDING + Constants::SHIP_RADIUS;
-    const float maxY = Constants::ARENA_HEIGHT_F - Constants::ARENA_BORDER_PADDING - Constants::SHIP_RADIUS;
-
-    if (ship.x < minX) {
-        ship.x = minX;
-        ship.vx = std::abs(ship.vx) * Constants::SHIP_BOUNCE_DAMPING;
-    } else if (ship.x > maxX) {
-        ship.x = maxX;
-        ship.vx = -std::abs(ship.vx) * Constants::SHIP_BOUNCE_DAMPING;
+void Simulation::extrapolateVisuals(GameState& state,
+                                      float dt,
+                                      bool extrapolateHostShip,
+                                      bool extrapolateBullets) {
+    if (state.roundBannerTimer > 0.0f) {
+        state.roundBannerTimer = std::max(0.0f, state.roundBannerTimer - dt);
     }
 
-    if (ship.y < minY) {
-        ship.y = minY;
-        ship.vy = std::abs(ship.vy) * Constants::SHIP_BOUNCE_DAMPING;
-    } else if (ship.y > maxY) {
-        ship.y = maxY;
-        ship.vy = -std::abs(ship.vy) * Constants::SHIP_BOUNCE_DAMPING;
+    if (extrapolateHostShip && state.ships[0].active) {
+        ShipState& hostShip = state.ships[0];
+        const float dragFactor = std::pow(Constants::SHIP_DRAG, dt * Constants::TICK_RATE);
+        hostShip.vx *= dragFactor;
+        hostShip.vy *= dragFactor;
+        hostShip.x += hostShip.vx * dt;
+        hostShip.y += hostShip.vy * dt;
+        clampAndBounceShip(hostShip);
     }
+
+    if (extrapolateBullets) {
+        const float minX = Constants::ARENA_BORDER_PADDING;
+        const float maxX = Constants::ARENA_WIDTH_F - Constants::ARENA_BORDER_PADDING;
+        const float minY = Constants::ARENA_BORDER_PADDING;
+        const float maxY = Constants::ARENA_HEIGHT_F - Constants::ARENA_BORDER_PADDING;
+
+        for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
+            BulletState& b = state.bullets[i];
+            if (!b.active) {
+                continue;
+            }
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+            b.lifetime -= dt;
+            if (b.lifetime <= 0.0f || b.x < minX || b.x > maxX || b.y < minY || b.y > maxY) {
+                b.active = 0;
+            }
+        }
+    }
+}
+
+void Simulation::update(float dt, const InputPacket& hostInput, const InputPacket& clientInput) {
+    m_state.tick++;
+    if (clientInput.tick > 0) {
+        m_state.lastClientTick = clientInput.tick;
+    }
+
+    if (m_state.roundBannerTimer > 0.0f) {
+        m_state.roundBannerTimer = std::max(0.0f, m_state.roundBannerTimer - dt);
+    }
+
+    // 1. Update both players' ships
+    updateShip(0, hostInput, dt);
+    updateShip(1, clientInput, dt);
+
+    // 2. Advance active projectiles
+    updateBullets(dt);
+
+    // 3. Perform circle-based collision detection & round-end evaluation
+    resolveCollisions();
+}
+
+void Simulation::updateShip(int playerId, const InputPacket& input, float dt) {
+    if (playerId < 0 || playerId >= Constants::MAX_PLAYERS) {
+        return;
+    }
+
+    ShipState& ship = m_state.ships[playerId];
+    if (!ship.active) {
+        return;
+    }
+
+    if (m_fireCooldowns[playerId] > 0.0f) {
+        m_fireCooldowns[playerId] = std::max(0.0f, m_fireCooldowns[playerId] - dt);
+    }
+
+    stepShipPhysics(ship, input, dt);
 
     // Weapon firing (Spacebar)
     if (input.shoot && m_fireCooldowns[playerId] <= 0.0f) {

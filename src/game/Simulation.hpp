@@ -8,6 +8,7 @@
 //        - Projectile spawning & movement
 //        - Circle-based collision detection (Bullet-vs-Ship & Ship-vs-Ship)
 //        - HP tracking (3 HP per ship) and round score/reset logic
+//        - Shared deterministic ship-step helper for client-side prediction
 // =============================================================================
 
 #include "shared/Constants.hpp"
@@ -25,6 +26,18 @@ public:
 
     // Advance authoritative simulation by dt seconds
     void update(float dt, const InputPacket& hostInput, const InputPacket& clientInput);
+
+    // Deterministic ship physics step shared between Host simulation and Client prediction
+    static void stepShipPhysics(ShipState& ship, const InputPacket& input, float dt);
+
+    // Lightweight visual extrapolation for remote entities between network snapshots
+    static void extrapolateVisuals(GameState& state, float dt, bool extrapolateHostShip, bool extrapolateBullets);
+
+    // Compute shortest signed angular difference in [-PI, PI]
+    static float shortestAngleDiff(float from, float to);
+
+    // Smoothly interpolate between two GameState snapshots for sub-tick rendering
+    static GameState interpolateState(const GameState& prev, const GameState& curr, float alpha);
 
     // Retrieve current authoritative state snapshot for rendering & network broadcast
     const GameState& getState() const { return m_state; }

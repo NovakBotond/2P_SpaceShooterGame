@@ -60,7 +60,6 @@ bool Renderer::initialize() {
         return true;
     }
 
-    SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(Constants::ARENA_WIDTH, Constants::ARENA_HEIGHT, "1v1 Neon Space Arena");
     SetTargetFPS(Constants::TICK_RATE);
     SetExitKey(KEY_NULL); // Let main loop handle ESC for menu/disconnect navigation
@@ -299,7 +298,8 @@ void Renderer::drawBullets(const GameState& state) {
 void Renderer::drawHUD(const GameState& state,
                        bool isHost,
                        bool isConnected,
-                       const std::string& statusMessage) {
+                       const std::string& statusMessage,
+                       uint32_t pingMs) {
     const ShipState& p1 = state.ships[0];
     const ShipState& p2 = state.ships[1];
 
@@ -368,9 +368,19 @@ void Renderer::drawHUD(const GameState& state,
 
     // Role & Network Status Bar at bottom
     const std::string roleBadge = isHost ? "[ROLE: HOST (P1 - CYAN)]  " : "[ROLE: CLIENT (P2 - MAGENTA)]  ";
-    const std::string footer = roleBadge + statusMessage + "   |   [ESC] Return to Menu";
+    const std::string footer = roleBadge + statusMessage + "   |   [ESC] Menu";
     const Color statusCol = isConnected ? Color{ 120, 255, 180, 220 } : Color{ 255, 215, 100, 220 };
     DrawText(footer.c_str(), 36, Constants::ARENA_HEIGHT - 44, 16, statusCol);
+
+    // Performance & Latency Telemetry (bottom right)
+    const std::string telemetry = isConnected
+        ? ("FPS: " + std::to_string(GetFPS()) + "  |  PING: " + std::to_string(pingMs) + " ms")
+        : ("FPS: " + std::to_string(GetFPS()));
+    const int telWidth = MeasureText(telemetry.c_str(), 16);
+    const Color telColor = (!isConnected || pingMs < 60)
+        ? Color{ 140, 240, 255, 220 }
+        : (pingMs < 130 ? Color{ 255, 215, 100, 220 } : Color{ 255, 110, 110, 220 });
+    DrawText(telemetry.c_str(), Constants::ARENA_WIDTH - 36 - telWidth, Constants::ARENA_HEIGHT - 44, 16, telColor);
 
     // -------------------------------------------------------------------------
     // Round Winner Announcement Banner
@@ -500,6 +510,7 @@ void Renderer::renderGame(const GameState& state,
                           bool isHost,
                           bool isConnected,
                           const std::string& statusMessage,
+                          uint32_t pingMs,
                           float dt) {
     const float elapsed = static_cast<float>(GetTime());
     updateShaderUniforms(elapsed);
@@ -547,7 +558,7 @@ void Renderer::renderGame(const GameState& state,
     DrawTextureRec(m_sceneTarget.texture, srcRect, { 0.0f, 0.0f }, WHITE);
     EndShaderMode();
 
-    drawHUD(state, isHost, isConnected, statusMessage);
+    drawHUD(state, isHost, isConnected, statusMessage, pingMs);
 
     EndDrawing();
 }

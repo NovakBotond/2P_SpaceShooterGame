@@ -35,12 +35,12 @@ float valueNoise(vec2 p) {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// 4-octave Fractional Brownian Motion (FBM) for organic nebula waves
+// 3-octave Fractional Brownian Motion (FBM) for organic nebula waves
 float fbm(vec2 p) {
     float value = 0.0;
     float amplitude = 0.5;
     mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         value += amplitude * valueNoise(p);
         p = rot * p * 2.02 + vec2(1.7, 9.2);
         amplitude *= 0.5;

@@ -66,6 +66,7 @@ struct BulletState {
 struct GameState {
     uint8_t     packetType       = static_cast<uint8_t>(PacketType::GAME_STATE);
     uint32_t    tick             = 0;
+    uint32_t    lastClientTick   = 0;    // Latest Client InputPacket::tick processed by Host
     ShipState   ships[Constants::MAX_PLAYERS]{};
     BulletState bullets[Constants::MAX_BULLETS]{};
     uint8_t     lastRoundWinner  = 255;  // 0 = P1, 1 = P2, 255 = None yet

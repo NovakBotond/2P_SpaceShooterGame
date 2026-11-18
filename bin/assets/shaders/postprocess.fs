@@ -2,8 +2,8 @@
 // =============================================================================
 // OWNER: Developer A (Graphics & Shaders)
 // FILE:  assets/shaders/postprocess.fs
-// DESC:  GLSL 330 post-processing neon glow/bloom + subtle CRT scanline shader
-//        applied to the full-screen RenderTexture2D.
+// DESC:  GLSL 330 high-speed post-processing neon glow/bloom + subtle CRT
+//        scanline shader applied to the full-screen RenderTexture2D.
 // =============================================================================
 
 in vec2 fragTexCoord;
@@ -37,23 +37,29 @@ void main() {
     baseColor.g = texture(texture0, uv).g;
     baseColor.b = texture(texture0, uv - chromaOffset).b;
 
-    // 2. Multi-ring 2D Gaussian-style glow/bloom kernel for neon vector lines
-    vec3 bloom = vec3(0.0);
-    float totalWeight = 0.0;
+    // 2. High-speed 13-tap dual-ring bloom kernel (optimized for integrated GPUs)
+    vec3 bloom = extractBright(baseColor) * 0.24;
 
-    for (int x = -3; x <= 3; x++) {
-        for (int y = -3; y <= 3; y++) {
-            vec2 offset = vec2(float(x), float(y)) * texel * 2.25;
-            float weight = exp(-0.22 * float(x * x + y * y));
-            vec3 sampleCol = texture(texture0, uv + offset).rgb;
-            bloom += extractBright(sampleCol) * weight;
-            totalWeight += weight;
-        }
-    }
-    bloom /= max(totalWeight, 0.0001);
+    vec2 inner = texel * 2.1;
+    bloom += extractBright(texture(texture0, uv + vec2(-inner.x, -inner.y)).rgb) * 0.11;
+    bloom += extractBright(texture(texture0, uv + vec2( inner.x, -inner.y)).rgb) * 0.11;
+    bloom += extractBright(texture(texture0, uv + vec2(-inner.x,  inner.y)).rgb) * 0.11;
+    bloom += extractBright(texture(texture0, uv + vec2( inner.x,  inner.y)).rgb) * 0.11;
+
+    vec2 mid = texel * 4.8;
+    bloom += extractBright(texture(texture0, uv + vec2(-mid.x,   0.0)).rgb) * 0.055;
+    bloom += extractBright(texture(texture0, uv + vec2( mid.x,   0.0)).rgb) * 0.055;
+    bloom += extractBright(texture(texture0, uv + vec2(  0.0, -mid.y)).rgb) * 0.055;
+    bloom += extractBright(texture(texture0, uv + vec2(  0.0,  mid.y)).rgb) * 0.055;
+
+    vec2 outer = texel * 7.6;
+    bloom += extractBright(texture(texture0, uv + vec2(-outer.x, -outer.y)).rgb) * 0.025;
+    bloom += extractBright(texture(texture0, uv + vec2( outer.x, -outer.y)).rgb) * 0.025;
+    bloom += extractBright(texture(texture0, uv + vec2(-outer.x,  outer.y)).rgb) * 0.025;
+    bloom += extractBright(texture(texture0, uv + vec2( outer.x,  outer.y)).rgb) * 0.025;
 
     // Combine base scene with intense neon bloom
-    vec3 color = baseColor + bloom * 1.35;
+    vec3 color = baseColor + bloom * 1.40;
 
     // 3. Subtle CRT horizontal scanline modulation
     float scanlineWave = sin(uv.y * res.y * 3.14159265 + uTime * 2.0);
