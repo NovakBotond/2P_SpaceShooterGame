@@ -1,15 +1,20 @@
-# CMake & Build Artifacts
+# CMake & Build Artifacts (intermediate compiler cache and objects)
 build/
 cmake-build-*/
 out/
 
-# Executables & Object Files
-*.exe
+# Intermediate Object & Library Files
 *.obj
 *.o
 *.a
 *.lib
 *.pdb
+
+# Ignore root-level / temporary executables, but ALLOW the pre-built game executable in bin/
+*.exe
+!bin/
+!bin/*.exe
+!bin/assets/**
 
 # IDE Settings
 .vs/

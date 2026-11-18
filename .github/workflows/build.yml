@@ -1,0 +1,68 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows x64 Executable
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Stage Release Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\assets\shaders
+          Copy-Item build\Release\NeonSpaceArena.exe -Destination dist\NeonSpaceArena.exe -ErrorAction SilentlyContinue
+          if (-not (Test-Path dist\NeonSpaceArena.exe)) {
+              Copy-Item build\NeonSpaceArena.exe -Destination dist\NeonSpaceArena.exe
+          }
+          Copy-Item assets\shaders\* -Destination dist\assets\shaders -Recurse -Force
+
+      - name: Upload Windows Playable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeonSpaceArena-Windows-x64
+          path: dist/
+
+  build-linux:
+    name: Build Linux x64 Executable
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Raylib Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Stage Linux Package
+        run: |
+          mkdir -p dist-linux/assets/shaders
+          cp build/NeonSpaceArena dist-linux/
+          cp -r assets/shaders/* dist-linux/assets/shaders/
+
+      - name: Upload Linux Playable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeonSpaceArena-Linux-x64
+          path: dist-linux/

@@ -4,6 +4,18 @@ A fast-paced, server-authoritative 2D multiplayer space shooter built from scrat
 
 ---
 
+## ⚡ Quick Start (Play Immediately Without Building)
+
+A pre-packaged, standalone Windows executable is included in the **`bin/`** directory (statically linked with zero DLL prerequisites):
+
+1. Clone or download the repository ZIP.
+2. Open the **`bin`** folder.
+3. Double-click **`NeonSpaceArena.exe`** to play right away!
+
+*(Linux & Windows builds are also automatically generated on every push via GitHub Actions under the **Actions** tab).*
+
+---
+
 ## Team Architecture & Ownership Split
 
 The codebase is modularized so two developers can work simultaneously in separate directories without merge conflicts:
