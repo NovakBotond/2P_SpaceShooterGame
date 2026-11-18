@@ -14,13 +14,14 @@
 namespace {
 #pragma pack(push, 1)
     struct CompactGameStateHeader {
-        uint8_t   packetType;
-        uint32_t  tick;
-        uint32_t  lastClientTick;
-        ShipState ships[Constants::MAX_PLAYERS];
-        uint8_t   lastRoundWinner;
-        float     roundBannerTimer;
-        uint8_t   activeBulletCount;
+        uint8_t    packetType;
+        uint32_t   tick;
+        uint32_t   lastClientTick;
+        ShipState  ships[Constants::MAX_PLAYERS];
+        CometState comets[Constants::MAX_COMETS];
+        uint8_t    lastRoundWinner;
+        float      roundBannerTimer;
+        uint8_t    activeBulletCount;
     };
 #pragma pack(pop)
 
@@ -238,6 +239,7 @@ void NetworkManager::pollEvents() {
                                     reconstructed.tick             = header.tick;
                                     reconstructed.lastClientTick   = header.lastClientTick;
                                     std::memcpy(reconstructed.ships, header.ships, sizeof(header.ships));
+                                    std::memcpy(reconstructed.comets, header.comets, sizeof(header.comets));
                                     reconstructed.lastRoundWinner  = header.lastRoundWinner;
                                     reconstructed.roundBannerTimer = header.roundBannerTimer;
 
@@ -325,6 +327,7 @@ void NetworkManager::broadcastGameState(const GameState& state) {
     header.tick             = state.tick;
     header.lastClientTick   = state.lastClientTick;
     std::memcpy(header.ships, state.ships, sizeof(header.ships));
+    std::memcpy(header.comets, state.comets, sizeof(header.comets));
     header.lastRoundWinner  = state.lastRoundWinner;
     header.roundBannerTimer = state.roundBannerTimer;
 

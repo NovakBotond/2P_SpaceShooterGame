@@ -46,8 +46,14 @@ namespace {
     }
 }
 
-Simulation::Simulation() {
+Simulation::Simulation()
+    : m_rng(std::random_device{}()) {
     resetMatch();
+}
+
+float Simulation::randomRange(float minVal, float maxVal) {
+    std::uniform_real_distribution<float> dist(minVal, maxVal);
+    return dist(m_rng);
 }
 
 void Simulation::resetMatch() {
@@ -94,8 +100,15 @@ void Simulation::resetRound() {
         m_state.bullets[i].active = 0;
     }
 
+    // Clear all active comets on round reset
+    for (int i = 0; i < Constants::MAX_COMETS; ++i) {
+        m_state.comets[i] = CometState{};
+        m_state.comets[i].active = 0;
+    }
+
     m_fireCooldowns[0] = 0.0f;
     m_fireCooldowns[1] = 0.0f;
+    m_cometSpawnTimer  = randomRange(Constants::COMET_MIN_SPAWN_INTERVAL, Constants::COMET_MAX_SPAWN_INTERVAL);
 }
 
 float Simulation::shortestAngleDiff(float from, float to) {
@@ -136,6 +149,20 @@ GameState Simulation::interpolateState(const GameState& prev, const GameState& c
         if (dx * dx + dy * dy < 60.0f * 60.0f) {
             out.bullets[i].x = p.x + dx * t;
             out.bullets[i].y = p.y + dy * t;
+        }
+    }
+
+    for (int i = 0; i < Constants::MAX_COMETS; ++i) {
+        const CometState& p = prev.comets[i];
+        const CometState& c = curr.comets[i];
+        if (!p.active || !c.active) {
+            continue;
+        }
+        const float dx = c.x - p.x;
+        const float dy = c.y - p.y;
+        if (dx * dx + dy * dy < 80.0f * 80.0f) {
+            out.comets[i].x = p.x + dx * t;
+            out.comets[i].y = p.y + dy * t;
         }
     }
 
@@ -232,6 +259,19 @@ void Simulation::extrapolateVisuals(GameState& state,
                 b.active = 0;
             }
         }
+
+        for (int i = 0; i < Constants::MAX_COMETS; ++i) {
+            CometState& c = state.comets[i];
+            if (!c.active) {
+                continue;
+            }
+            c.x += c.vx * dt;
+            c.y += c.vy * dt;
+            c.lifetime -= dt;
+            if (c.lifetime <= 0.0f || c.x < minX || c.x > maxX || c.y < minY || c.y > maxY) {
+                c.active = 0;
+            }
+        }
     }
 }
 
@@ -252,7 +292,10 @@ void Simulation::update(float dt, const InputPacket& hostInput, const InputPacke
     // 2. Advance active projectiles
     updateBullets(dt);
 
-    // 3. Perform circle-based collision detection & round-end evaluation
+    // 3. Spawn & advance random flying comets
+    updateComets(dt);
+
+    // 4. Perform circle-based collision detection & round-end evaluation
     resolveCollisions();
 }
 
@@ -324,6 +367,102 @@ void Simulation::updateBullets(float dt) {
     }
 }
 
+void Simulation::spawnComet() {
+    int slot = -1;
+    for (int i = 0; i < Constants::MAX_COMETS; ++i) {
+        if (!m_state.comets[i].active) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        return;
+    }
+
+    const float pad = Constants::ARENA_BORDER_PADDING + Constants::COMET_RADIUS + 10.0f;
+    const float minX = pad;
+    const float maxX = Constants::ARENA_WIDTH_F - pad;
+    const float minY = pad;
+    const float maxY = Constants::ARENA_HEIGHT_F - pad;
+
+    // Pick a random edge (0=Top, 1=Bottom, 2=Left, 3=Right) to enter from
+    std::uniform_int_distribution<int> edgeDist(0, 3);
+    const int edge = edgeDist(m_rng);
+
+    float startX = 0.0f;
+    float startY = 0.0f;
+    switch (edge) {
+        case 0: startX = randomRange(minX, maxX); startY = minY; break;
+        case 1: startX = randomRange(minX, maxX); startY = maxY; break;
+        case 2: startX = minX; startY = randomRange(minY, maxY); break;
+        default: startX = maxX; startY = randomRange(minY, maxY); break;
+    }
+
+    // Ensure comet doesn't spawn directly on top of a player ship
+    for (int p = 0; p < Constants::MAX_PLAYERS; ++p) {
+        const ShipState& ship = m_state.ships[p];
+        if (ship.active && checkCircleOverlap(startX, startY, Constants::COMET_RADIUS + 110.0f,
+                                              ship.x, ship.y, Constants::SHIP_RADIUS)) {
+            return;
+        }
+    }
+
+    // Aim across the interior of the arena with a random trajectory vector & speed
+    const float targetX = randomRange(Constants::ARENA_WIDTH_F * 0.22f, Constants::ARENA_WIDTH_F * 0.78f);
+    const float targetY = randomRange(Constants::ARENA_HEIGHT_F * 0.22f, Constants::ARENA_HEIGHT_F * 0.78f);
+    float dx = targetX - startX;
+    float dy = targetY - startY;
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 1.0f) {
+        dx = 1.0f;
+        dy = 0.0f;
+        len = 1.0f;
+    }
+
+    const float speed = randomRange(Constants::COMET_MIN_SPEED, Constants::COMET_MAX_SPEED);
+    const float life  = randomRange(Constants::COMET_MIN_LIFETIME, Constants::COMET_MAX_LIFETIME);
+
+    CometState& comet = m_state.comets[slot];
+    comet.x        = startX;
+    comet.y        = startY;
+    comet.vx       = (dx / len) * speed;
+    comet.vy       = (dy / len) * speed;
+    comet.radius   = Constants::COMET_RADIUS;
+    comet.lifetime = life;
+    comet.maxLife  = life;
+    comet.active   = 1;
+}
+
+void Simulation::updateComets(float dt) {
+    m_cometSpawnTimer -= dt;
+    if (m_cometSpawnTimer <= 0.0f) {
+        spawnComet();
+        m_cometSpawnTimer = randomRange(Constants::COMET_MIN_SPAWN_INTERVAL, Constants::COMET_MAX_SPAWN_INTERVAL);
+    }
+
+    const float minX = Constants::ARENA_BORDER_PADDING;
+    const float maxX = Constants::ARENA_WIDTH_F - Constants::ARENA_BORDER_PADDING;
+    const float minY = Constants::ARENA_BORDER_PADDING;
+    const float maxY = Constants::ARENA_HEIGHT_F - Constants::ARENA_BORDER_PADDING;
+
+    for (int i = 0; i < Constants::MAX_COMETS; ++i) {
+        CometState& comet = m_state.comets[i];
+        if (!comet.active) {
+            continue;
+        }
+
+        comet.x += comet.vx * dt;
+        comet.y += comet.vy * dt;
+        comet.lifetime -= dt;
+
+        if (comet.lifetime <= 0.0f ||
+            comet.x < minX || comet.x > maxX ||
+            comet.y < minY || comet.y > maxY) {
+            comet.active = 0;
+        }
+    }
+}
+
 void Simulation::resolveCollisions() {
     ShipState& s0 = m_state.ships[0];
     ShipState& s1 = m_state.ships[1];
@@ -363,7 +502,61 @@ void Simulation::resolveCollisions() {
         }
     }
 
-    // 2. Bullet-vs-Ship circle collision & HP tracking
+    // 2. Bullet-vs-Comet collision (dense comet core absorbs projectiles)
+    for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
+        BulletState& bullet = m_state.bullets[i];
+        if (!bullet.active) {
+            continue;
+        }
+        for (int c = 0; c < Constants::MAX_COMETS; ++c) {
+            const CometState& comet = m_state.comets[c];
+            if (!comet.active) {
+                continue;
+            }
+            if (checkCircleOverlap(bullet.x, bullet.y, Constants::BULLET_RADIUS,
+                                   comet.x, comet.y, comet.radius)) {
+                bullet.active = 0;
+                break;
+            }
+        }
+    }
+
+    // 3. Comet-vs-Ship collision (hazards deal 1 HP damage and shatter on impact)
+    for (int c = 0; c < Constants::MAX_COMETS; ++c) {
+        CometState& comet = m_state.comets[c];
+        if (!comet.active) {
+            continue;
+        }
+        for (int targetId = 0; targetId < Constants::MAX_PLAYERS; ++targetId) {
+            ShipState& targetShip = m_state.ships[targetId];
+            if (!targetShip.active) {
+                continue;
+            }
+            if (checkCircleOverlap(comet.x, comet.y, comet.radius,
+                                   targetShip.x, targetShip.y, Constants::SHIP_RADIUS)) {
+                comet.active = 0;
+
+                const float cSpeed = std::sqrt(comet.vx * comet.vx + comet.vy * comet.vy);
+                if (cSpeed > 0.001f) {
+                    targetShip.vx += (comet.vx / cSpeed) * Constants::COMET_HIT_KNOCKBACK;
+                    targetShip.vy += (comet.vy / cSpeed) * Constants::COMET_HIT_KNOCKBACK;
+                }
+
+                targetShip.hp -= 1;
+                if (targetShip.hp <= 0) {
+                    const int winnerId = (targetId == 0) ? 1 : 0;
+                    m_state.ships[winnerId].score += 1;
+                    m_state.lastRoundWinner = static_cast<uint8_t>(winnerId);
+                    m_state.roundBannerTimer = Constants::ROUND_BANNER_DURATION;
+                    resetRound();
+                    return;
+                }
+                break;
+            }
+        }
+    }
+
+    // 4. Bullet-vs-Ship circle collision & HP tracking
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         BulletState& bullet = m_state.bullets[i];
         if (!bullet.active) {

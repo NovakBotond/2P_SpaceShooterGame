@@ -61,6 +61,20 @@ struct BulletState {
 };
 
 // -----------------------------------------------------------------------------
+// Authoritative Per-Comet State (Randomly flying map hazards)
+// -----------------------------------------------------------------------------
+struct CometState {
+    float   x        = 0.0f;
+    float   y        = 0.0f;
+    float   vx       = 0.0f;
+    float   vy       = 0.0f;
+    float   radius   = Constants::COMET_RADIUS;
+    float   lifetime = 0.0f;
+    float   maxLife  = 1.0f;
+    uint8_t active   = 0;
+};
+
+// -----------------------------------------------------------------------------
 // Host -> Client Full Authoritative Game State Snapshot
 // -----------------------------------------------------------------------------
 struct GameState {
@@ -69,6 +83,7 @@ struct GameState {
     uint32_t    lastClientTick   = 0;    // Latest Client InputPacket::tick processed by Host
     ShipState   ships[Constants::MAX_PLAYERS]{};
     BulletState bullets[Constants::MAX_BULLETS]{};
+    CometState  comets[Constants::MAX_COMETS]{};
     uint8_t     lastRoundWinner  = 255;  // 0 = P1, 1 = P2, 255 = None yet
     float       roundBannerTimer = 0.0f; // > 0 displays round winner banner
 };

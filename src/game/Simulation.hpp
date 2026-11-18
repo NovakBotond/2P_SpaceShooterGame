@@ -13,6 +13,7 @@
 
 #include "shared/Constants.hpp"
 #include "shared/Protocol.hpp"
+#include <random>
 
 class Simulation {
 public:
@@ -43,11 +44,16 @@ public:
     const GameState& getState() const { return m_state; }
 
 private:
+    float randomRange(float minVal, float maxVal);
     void updateShip(int playerId, const InputPacket& input, float dt);
     void spawnBullet(int playerId, const ShipState& ship);
     void updateBullets(float dt);
+    void spawnComet();
+    void updateComets(float dt);
     void resolveCollisions();
 
-    GameState m_state{};
-    float     m_fireCooldowns[Constants::MAX_PLAYERS]{ 0.0f, 0.0f };
+    GameState    m_state{};
+    float        m_fireCooldowns[Constants::MAX_PLAYERS]{ 0.0f, 0.0f };
+    float        m_cometSpawnTimer = 2.5f;
+    std::mt19937 m_rng;
 };

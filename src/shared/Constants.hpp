@@ -57,4 +57,17 @@ namespace Constants {
     // -------------------------------------------------------------------------
     constexpr float ROUND_BANNER_DURATION = 2.0f;  // Seconds to show round winner banner
 
+    // -------------------------------------------------------------------------
+    // Comets (Randomly flying map hazards - capped to keep gameplay fair)
+    // -------------------------------------------------------------------------
+    constexpr int   MAX_COMETS               = 3;      // Max simultaneous comets
+    constexpr float COMET_MIN_SPAWN_INTERVAL = 3.2f;   // Min seconds between spawns
+    constexpr float COMET_MAX_SPAWN_INTERVAL = 5.8f;   // Max seconds between spawns
+    constexpr float COMET_MIN_SPEED          = 180.0f; // Min speed (px/sec)
+    constexpr float COMET_MAX_SPEED          = 300.0f; // Max speed (px/sec)
+    constexpr float COMET_MIN_LIFETIME       = 4.5f;   // Min comet duration (sec)
+    constexpr float COMET_MAX_LIFETIME       = 8.5f;   // Max comet duration (sec)
+    constexpr float COMET_RADIUS             = 22.0f;  // Circle collider radius (px)
+    constexpr float COMET_HIT_KNOCKBACK      = 210.0f; // Knockback on ship impact
+
 } // namespace Constants

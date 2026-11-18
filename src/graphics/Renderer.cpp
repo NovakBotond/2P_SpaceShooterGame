@@ -251,6 +251,31 @@ void Renderer::updateParticles(const GameState& state, float dt) {
         part.life -= dt;
     }
 
+    // Emit fiery trail particles behind active comets
+    for (int c = 0; c < Constants::MAX_COMETS; ++c) {
+        const CometState& comet = state.comets[c];
+        if (!comet.active) {
+            continue;
+        }
+        const float speed = std::sqrt(comet.vx * comet.vx + comet.vy * comet.vy);
+        if (speed > 1.0f) {
+            const float backAngle = std::atan2(-comet.vy, -comet.vx);
+            const float spread = (static_cast<float>(GetRandomValue(-100, 100)) / 100.0f) * 0.45f;
+            const float pSpeed = static_cast<float>(GetRandomValue(60, 150));
+
+            ThrustParticle part{};
+            part.x       = comet.x + std::cos(backAngle) * (comet.radius * 0.6f);
+            part.y       = comet.y + std::sin(backAngle) * (comet.radius * 0.6f);
+            part.vx      = std::cos(backAngle + spread) * pSpeed;
+            part.vy      = std::sin(backAngle + spread) * pSpeed;
+            part.maxLife = static_cast<float>(GetRandomValue(20, 42)) / 100.0f;
+            part.life    = part.maxLife;
+            part.size    = static_cast<float>(GetRandomValue(30, 55)) / 10.0f;
+            part.ownerId = 2; // 2 = Fiery Orange Comet Particle
+            m_particles.push_back(part);
+        }
+    }
+
     m_particles.erase(
         std::remove_if(m_particles.begin(), m_particles.end(),
                        [](const ThrustParticle& p) { return p.life <= 0.0f; }),
@@ -291,7 +316,9 @@ void Renderer::drawParticles() {
         const float ratio = std::clamp(part.life / part.maxLife, 0.0f, 1.0f);
         const unsigned char alpha = static_cast<unsigned char>(ratio * 240.0f);
 
-        Color primary = (part.ownerId == 0) ? NEON_CYAN : NEON_MAGENTA;
+        Color primary = (part.ownerId == 0)
+            ? NEON_CYAN
+            : (part.ownerId == 1 ? NEON_MAGENTA : Color{ 255, 130, 20, 255 });
         primary.a = alpha;
 
         Color core = WHITE;
@@ -299,6 +326,48 @@ void Renderer::drawParticles() {
 
         DrawCircleV({ part.x, part.y }, part.size * ratio * 1.6f, primary);
         DrawCircleV({ part.x, part.y }, part.size * ratio * 0.7f, core);
+    }
+}
+
+void Renderer::drawComets(const GameState& state) {
+    const float elapsed = static_cast<float>(GetTime());
+
+    for (int i = 0; i < Constants::MAX_COMETS; ++i) {
+        const CometState& comet = state.comets[i];
+        if (!comet.active) {
+            continue;
+        }
+
+        const float lifeRatio = std::clamp(comet.lifetime / std::max(comet.maxLife, 0.01f), 0.0f, 1.0f);
+        const Vector2 center = { comet.x, comet.y };
+
+        // Glowing plasma tail streaks opposite velocity vector
+        const float speed = std::sqrt(comet.vx * comet.vx + comet.vy * comet.vy);
+        if (speed > 1.0f) {
+            const float dirX = -comet.vx / speed;
+            const float dirY = -comet.vy / speed;
+            const float perpX = -dirY;
+            const float perpY = dirX;
+
+            const Vector2 tailEnd   = { comet.x + dirX * (comet.radius * 3.6f), comet.y + dirY * (comet.radius * 3.6f) };
+            const Vector2 tailLeft  = { comet.x + perpX * (comet.radius * 0.7f), comet.y + perpY * (comet.radius * 0.7f) };
+            const Vector2 tailRight = { comet.x - perpX * (comet.radius * 0.7f), comet.y - perpY * (comet.radius * 0.7f) };
+
+            DrawLineEx(center, tailEnd, comet.radius * 1.3f, { 255, 80, 10, 95 });
+            DrawLineEx(tailLeft, tailEnd, 3.0f, { 255, 155, 30, 180 });
+            DrawLineEx(tailRight, tailEnd, 3.0f, { 255, 155, 30, 180 });
+            DrawLineEx(center, tailEnd, 2.5f, { 255, 230, 150, 220 });
+        }
+
+        // Outer neon orange glow & rotating hexagon core
+        DrawCircleV(center, comet.radius * 1.25f, { 255, 95, 15, 85 });
+        DrawPolyLinesEx(center, 6, comet.radius, elapsed * 140.0f + i * 60.0f, 3.2f, { 255, 165, 35, 255 });
+        DrawPolyLinesEx(center, 6, comet.radius * 0.65f, -elapsed * 180.0f, 2.0f, { 255, 235, 180, 255 });
+        DrawCircleV(center, comet.radius * 0.30f, WHITE);
+
+        // Remaining lifetime arc around comet
+        DrawRing(center, comet.radius + 4.0f, comet.radius + 6.0f,
+                 0.0f, 360.0f * lifeRatio, 24, { 255, 200, 80, 170 });
     }
 }
 
@@ -641,10 +710,13 @@ void Renderer::renderGame(const GameState& state,
     // 1b. Neon arena perimeter & markings
     drawArenaBorder();
 
-    // 1c. Engine thrust particles
+    // 1c. Engine thrust particles & comet trails
     drawParticles();
 
-    // 1d. Projectiles
+    // 1d. Randomly flying comets
+    drawComets(state);
+
+    // 1e. Projectiles
     drawBullets(state);
 
     // 1e. Vector-style neon ships (Player 1 Cyan, Player 2 Magenta)
