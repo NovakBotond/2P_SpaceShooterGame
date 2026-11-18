@@ -1,9 +1,9 @@
 // =============================================================================
 // OWNER: Shared Integration — Developer A (Graphics) & Developer B (Net/Game)
 // FILE:  src/main.cpp
-// DESC:  Application entry point and fixed-timestep 60Hz main loop connecting
-//        NetworkManager, Simulation (with Client-Side Prediction &
-//        Reconciliation), and Renderer with an interactive Host/Join menu.
+// DESC:  Application entry point with 5-second studio splash screen, Main Menu
+//        (1v1 PvP vs 2P Co-op Waves + Display/Resolution settings), and fixed
+//        60Hz simulation loop with Client-Side Prediction & Reconciliation.
 // =============================================================================
 
 #include "game/Simulation.hpp"
@@ -19,6 +19,7 @@
 #include <string>
 
 enum class AppMode {
+    Intro,
     Menu,
     InGame
 };
@@ -103,51 +104,46 @@ namespace {
             const float dy = reconciled.y - predictedShip.y;
             const float distSq = dx * dx + dy * dy;
 
-            const bool roundReset = (distSq > 70.0f * 70.0f) ||
-                                    (reconciled.hp > predictedShip.hp) ||
-                                    (serverState.ships[0].score != visualState.ships[0].score) ||
-                                    (serverState.ships[1].score != visualState.ships[1].score);
+            const bool isPvp = (serverState.gameMode == static_cast<uint8_t>(GameMode::PvP));
+            const bool snapTeleport = (distSq > 70.0f * 70.0f) ||
+                                      (reconciled.active != predictedShip.active) ||
+                                      (isPvp && (serverState.ships[0].score != visualState.ships[0].score ||
+                                                 serverState.ships[1].score != visualState.ships[1].score));
 
-            if (roundReset) {
+            if (snapTeleport) {
                 predictedShip     = reconciled;
                 prevPredictedShip = reconciled;
-            } else if (distSq > 0.25f) {
-                // Smoothly blend small physics discrepancies (collisions / knockback)
-                predictedShip.x                 += dx * 0.30f;
-                predictedShip.y                 += dy * 0.30f;
-                predictedShip.vx                += (reconciled.vx - predictedShip.vx) * 0.35f;
-                predictedShip.vy                += (reconciled.vy - predictedShip.vy) * 0.35f;
-                predictedShip.angle             += Simulation::shortestAngleDiff(predictedShip.angle, reconciled.angle) * 0.35f;
-                predictedShip.hp                 = reconciled.hp;
-                predictedShip.score              = reconciled.score;
-                predictedShip.ammo               = reconciled.ammo;
-                predictedShip.overheatSmokeTimer = reconciled.overheatSmokeTimer;
-                predictedShip.ammoOverheated     = reconciled.ammoOverheated;
-                predictedShip.fireRateTimer      = reconciled.fireRateTimer;
-                predictedShip.speedBoostTimer    = reconciled.speedBoostTimer;
-                predictedShip.stealthTimer       = reconciled.stealthTimer;
-                predictedShip.shotgunShotsLeft   = reconciled.shotgunShotsLeft;
-                predictedShip.bouncyShotsLeft    = reconciled.bouncyShotsLeft;
-                predictedShip.active             = reconciled.active;
             } else {
-                predictedShip.hp                 = reconciled.hp;
-                predictedShip.score              = reconciled.score;
-                predictedShip.ammo               = reconciled.ammo;
-                predictedShip.overheatSmokeTimer = reconciled.overheatSmokeTimer;
-                predictedShip.ammoOverheated     = reconciled.ammoOverheated;
-                predictedShip.fireRateTimer      = reconciled.fireRateTimer;
-                predictedShip.speedBoostTimer    = reconciled.speedBoostTimer;
-                predictedShip.stealthTimer       = reconciled.stealthTimer;
-                predictedShip.shotgunShotsLeft   = reconciled.shotgunShotsLeft;
-                predictedShip.bouncyShotsLeft    = reconciled.bouncyShotsLeft;
-                predictedShip.active             = reconciled.active;
+                const float oldX        = predictedShip.x;
+                const float oldY        = predictedShip.y;
+                const float oldVx       = predictedShip.vx;
+                const float oldVy       = predictedShip.vy;
+                const float oldAngle    = predictedShip.angle;
+                const uint8_t oldThrust = predictedShip.isThrusting;
+
+                predictedShip = reconciled;
+
+                if (distSq <= 0.25f) {
+                    predictedShip.x           = oldX;
+                    predictedShip.y           = oldY;
+                    predictedShip.vx          = oldVx;
+                    predictedShip.vy          = oldVy;
+                    predictedShip.angle       = oldAngle;
+                    predictedShip.isThrusting = oldThrust;
+                } else {
+                    predictedShip.x     = oldX + (reconciled.x - oldX) * 0.30f;
+                    predictedShip.y     = oldY + (reconciled.y - oldY) * 0.30f;
+                    predictedShip.vx    = oldVx + (reconciled.vx - oldVx) * 0.35f;
+                    predictedShip.vy    = oldVy + (reconciled.vy - oldVy) * 0.35f;
+                    predictedShip.angle = oldAngle + Simulation::shortestAngleDiff(oldAngle, reconciled.angle) * 0.35f;
+                }
             }
 
-            // Update remote Host ship & bullets with smooth positional blending
+            // Update remote Host ship, enemies, comets & bullets with smooth blending
             const ShipState prevHostShip = visualState.ships[0];
             visualState = serverState;
 
-            if (!roundReset && prevHostShip.active && serverState.ships[0].active) {
+            if (!snapTeleport && prevHostShip.active && serverState.ships[0].active) {
                 const float hdx = serverState.ships[0].x - prevHostShip.x;
                 const float hdy = serverState.ships[0].y - prevHostShip.y;
                 if (hdx * hdx + hdy * hdy < 70.0f * 70.0f) {
@@ -156,7 +152,7 @@ namespace {
                     visualState.ships[0].angle = prevHostShip.angle +
                         Simulation::shortestAngleDiff(prevHostShip.angle, serverState.ships[0].angle) * 0.55f;
                 }
-            } else if (roundReset) {
+            } else if (snapTeleport) {
                 prevVisualState = visualState;
             }
         }
@@ -172,18 +168,20 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    AppMode               mode          = AppMode::Menu;
+    AppMode               mode          = AppMode::Intro;
+    float                 introTimer    = 0.0f;
+    GameMode              selectedMode  = GameMode::PvP;
     std::string           ipInput       = "127.0.0.1";
     bool                  editingIp     = false;
-    std::string           menuStatus    = "Press [1] to Host, [2] to Join, or [BACKSPACE] to edit IP.";
+    std::string           menuStatus    = "Press [M] to switch Mode, [1] to Host, [2] to Join.";
     float                 accumulator   = 0.0f;
     bool                  shootLatch    = false;
     GameState             prevHostState = simulation.getState();
     ClientPredictionState clientPred;
     clientPred.reset(simulation.getState());
 
-    auto enterGameSession = [&]() {
-        simulation.resetMatch();
+    auto enterGameSession = [&](GameMode matchMode) {
+        simulation.resetMatch(matchMode);
         prevHostState = simulation.getState();
         clientPred.reset(simulation.getState());
         accumulator = 0.0f;
@@ -193,19 +191,25 @@ int main(int argc, char* argv[]) {
 
     // Optional CLI arguments for quick dual-instance launching:
     //   NeonSpaceArena --host
+    //   NeonSpaceArena --host-coop
     //   NeonSpaceArena --join 127.0.0.1
     if (argc >= 2) {
         const std::string arg1 = argv[1];
         if (arg1 == "--host") {
             if (network.startHost(Constants::DEFAULT_PORT)) {
-                enterGameSession();
+                enterGameSession(GameMode::PvP);
+            }
+        } else if (arg1 == "--host-coop") {
+            selectedMode = GameMode::CoopWaves;
+            if (network.startHost(Constants::DEFAULT_PORT)) {
+                enterGameSession(GameMode::CoopWaves);
             }
         } else if (arg1 == "--join") {
             if (argc >= 3) {
                 ipInput = argv[2];
             }
             if (network.connectToHost(ipInput, Constants::DEFAULT_PORT)) {
-                enterGameSession();
+                enterGameSession(GameMode::PvP);
             }
         }
     }
@@ -213,13 +217,25 @@ int main(int argc, char* argv[]) {
     while (!WindowShouldClose()) {
         const float dt = std::min(GetFrameTime(), Constants::FIXED_TIMESTEP * 4.0f);
 
-        // Global Fullscreen toggle key [F11] works in both Menu and In-Game
+        // Global Fullscreen toggle key [F11] works across Intro, Menu, and In-Game
         if (IsKeyPressed(KEY_F11)) {
             renderer.toggleFullscreenMode();
         }
 
         // =====================================================================
-        // STATE 1: START MENU (Host / Join via IP)
+        // STATE 0: 5-SECOND STUDIO SPLASH / LOADING SCREEN
+        // =====================================================================
+        if (mode == AppMode::Intro) {
+            introTimer += dt;
+            renderer.renderIntro(introTimer);
+            if (introTimer >= Constants::INTRO_DURATION) {
+                mode = AppMode::Menu;
+            }
+            continue;
+        }
+
+        // =====================================================================
+        // STATE 1: START MENU (Mode Select / Host / Join via IP / Display)
         // =====================================================================
         if (mode == AppMode::Menu) {
             if (IsKeyPressed(KEY_ESCAPE)) {
@@ -227,7 +243,7 @@ int main(int argc, char* argv[]) {
                     editingIp = false;
                     menuStatus = "IP ready (" + ipInput + "). Press [1] Host or [2]/[ENTER] Join.";
                 } else {
-                    break; // Exit application from main menu
+                    break;
                 }
             }
 
@@ -235,10 +251,9 @@ int main(int argc, char* argv[]) {
                 editingIp = !editingIp;
                 menuStatus = editingIp
                     ? "Editing IP: type address and press [ENTER] to Join."
-                    : "Press [1] to Host, [2] to Join, or [BACKSPACE] to edit IP.";
+                    : "Press [M] to switch Mode, [1] to Host, [2] to Join.";
             }
 
-            // Handle Backspace (also enters IP editing mode so digits 1 & 2 can be typed)
             if (IsKeyPressed(KEY_BACKSPACE)) {
                 editingIp = true;
                 if (!ipInput.empty()) {
@@ -248,6 +263,14 @@ int main(int argc, char* argv[]) {
             }
 
             if (!editingIp) {
+                // Game Mode Toggle (1v1 PvP vs 2P Co-op Waves)
+                if (IsKeyPressed(KEY_M) || IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_DOWN)) {
+                    selectedMode = (selectedMode == GameMode::PvP) ? GameMode::CoopWaves : GameMode::PvP;
+                    menuStatus = (selectedMode == GameMode::CoopWaves)
+                        ? "Mode: 2P Co-op Waves selected! Press [1] to Host."
+                        : "Mode: 1v1 PvP Duel selected! Press [1] to Host.";
+                }
+
                 // Display & resolution controls on the start menu
                 if (IsKeyPressed(KEY_F)) {
                     renderer.toggleFullscreenMode();
@@ -260,10 +283,9 @@ int main(int argc, char* argv[]) {
                     menuStatus = "Resolution set to " + renderer.getDisplaySettingsLabel();
                 }
 
-                // Quick-launch hotkeys when not actively typing an IP
                 if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
                     if (network.startHost(Constants::DEFAULT_PORT)) {
-                        enterGameSession();
+                        enterGameSession(selectedMode);
                         continue;
                     } else {
                         menuStatus = network.getStatusMessage();
@@ -271,14 +293,13 @@ int main(int argc, char* argv[]) {
                 } else if (IsKeyPressed(KEY_TWO) || IsKeyPressed(KEY_KP_2) || IsKeyPressed(KEY_ENTER)) {
                     const std::string targetIp = ipInput.empty() ? "127.0.0.1" : ipInput;
                     if (network.connectToHost(targetIp, Constants::DEFAULT_PORT)) {
-                        enterGameSession();
+                        enterGameSession(GameMode::PvP);
                         continue;
                     } else {
                         menuStatus = network.getStatusMessage();
                     }
                 }
 
-                // If user starts typing digits (other than 1/2) or '.', automatically enter IP edit mode
                 int key = GetCharPressed();
                 while (key > 0) {
                     if ((key >= '0' && key <= '9' && key != '1' && key != '2') || key == '.') {
@@ -291,7 +312,6 @@ int main(int argc, char* argv[]) {
                     key = GetCharPressed();
                 }
             } else {
-                // Full IP editing mode: digits 0-9 (including 1 and 2) and '.' are appended to IP
                 int key = GetCharPressed();
                 while (key > 0) {
                     if (((key >= '0' && key <= '9') || key == '.') && ipInput.size() < 32) {
@@ -304,7 +324,7 @@ int main(int argc, char* argv[]) {
                     editingIp = false;
                     const std::string targetIp = ipInput.empty() ? "127.0.0.1" : ipInput;
                     if (network.connectToHost(targetIp, Constants::DEFAULT_PORT)) {
-                        enterGameSession();
+                        enterGameSession(GameMode::PvP);
                         continue;
                     } else {
                         menuStatus = network.getStatusMessage();
@@ -312,17 +332,17 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            renderer.renderMenu(ipInput, menuStatus);
+            renderer.renderMenu(ipInput, selectedMode, menuStatus);
         }
         // =====================================================================
-        // STATE 2: ACTIVE 1v1 MULTIPLAYER MATCH (Fixed 60Hz Tick + Prediction)
+        // STATE 2: ACTIVE MULTIPLAYER MATCH (Fixed 60Hz Tick + Prediction)
         // =====================================================================
         else if (mode == AppMode::InGame) {
             if (IsKeyPressed(KEY_ESCAPE)) {
                 network.shutdown();
                 mode = AppMode::Menu;
                 editingIp = false;
-                menuStatus = "Disconnected. Press [1] to Host or [2] to Join.";
+                menuStatus = "Disconnected. Press [M] Switch Mode, [1] Host, or [2] Join.";
                 continue;
             }
 
@@ -331,10 +351,12 @@ int main(int argc, char* argv[]) {
 
             if (network.getRole() == NetworkRole::Host) {
                 network.pollEvents();
+                simulation.setCoopPlayer2Present(network.isConnected());
 
                 while (accumulator >= Constants::FIXED_TIMESTEP) {
                     accumulator -= Constants::FIXED_TIMESTEP;
                     network.pollEvents();
+                    simulation.setCoopPlayer2Present(network.isConnected());
 
                     prevHostState = simulation.getState();
                     const InputPacket hostInput   = sampleLocalInput(0, simulation.getState().tick, shootLatch);
@@ -379,10 +401,8 @@ int main(int argc, char* argv[]) {
                             clientPred.pendingInputs.pop_front();
                         }
 
-                        // Predict Client's own ship immediately (0ms local input latency)
                         Simulation::stepShipPhysics(clientPred.predictedShip, clientInput, Constants::FIXED_TIMESTEP);
 
-                        // Smoothly extrapolate remote Host ship & bullets across Wi-Fi jitter gaps
                         if (clientPred.timeSinceSnapshot < 0.12f) {
                             Simulation::extrapolateVisuals(clientPred.visualState, Constants::FIXED_TIMESTEP, true, true);
                             clientPred.timeSinceSnapshot += Constants::FIXED_TIMESTEP;

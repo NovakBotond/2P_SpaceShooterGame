@@ -2,7 +2,9 @@
 // OWNER: Developer A (Graphics & Shaders)
 // FILE:  src/graphics/Renderer.cpp
 // DESC:  Implementation of Raylib OpenGL rendering pipeline, GLSL 330 shader
-//        management, vector ship geometry, thrust particles, and neon HUD.
+//        management, 5-second studio splash screen, resolution/fullscreen
+//        scaling, vector ships, blue bubble shield, comets, co-op enemies &
+//        bosses, 13 power-ups, above-ship buff badges, and HUD telemetry.
 // =============================================================================
 
 #include "graphics/Renderer.hpp"
@@ -21,6 +23,12 @@ namespace {
     constexpr Color NEON_MAGENTA    = { 255,  30, 195, 255 };
     constexpr Color NEON_MAG_GLOW   = { 230,   0, 160, 110 };
 
+    // Enemies, Allies & Shields
+    constexpr Color ENEMY_CRIMSON   = { 255,  45,  70, 255 };
+    constexpr Color ENEMY_BOSS_GOLD = { 255, 190,  40, 255 };
+    constexpr Color ALLY_MINT       = {  70, 255, 165, 255 };
+    constexpr Color SHIELD_BLUE     = {  50, 175, 255, 255 };
+
     // Arena & UI Accents
     constexpr Color NEON_BORDER     = {  55, 130, 255, 180 };
     constexpr Color HUD_BG_DARK     = {  10,  12,  26, 200 };
@@ -38,6 +46,31 @@ namespace {
         { 2560, 1440, "2560x1440 (QHD)"    }
     };
     constexpr int NUM_RES_PRESETS = static_cast<int>(sizeof(RES_PRESETS) / sizeof(RES_PRESETS[0]));
+
+    struct PowerUpVisualInfo {
+        Color       color;
+        const char* symbol;
+        const char* shortName;
+    };
+
+    PowerUpVisualInfo getPowerUpVisual(PowerUpType type) {
+        switch (type) {
+            case PowerUpType::FireRateBoost:   return { { 255, 215,  40, 255 }, "*",   "FR+" };
+            case PowerUpType::SpeedBoost:      return { {  50, 255, 130, 255 }, ">",   "SPD" };
+            case PowerUpType::Shotgun:         return { { 255, 120,  35, 255 }, "#",   "SGN" };
+            case PowerUpType::StealthImmortal: return { { 175, 130, 255, 255 }, "@",   "INV" };
+            case PowerUpType::BouncyBullets:   return { {  80, 255, 230, 255 }, "~",   "BNC" };
+            case PowerUpType::ExtraLife:       return { { 255,  75, 110, 255 }, "+",   "+HP" };
+            case PowerUpType::FullAmmo:        return { {  90, 210, 255, 255 }, "=",   "AMO" };
+            case PowerUpType::RadialBurst:     return { { 255, 255,  90, 255 }, "+",   "360" };
+            case PowerUpType::ShieldBubble:    return { {  50, 175, 255, 255 }, "(O)", "SHD" };
+            case PowerUpType::EnemySlow:       return { { 115, 200, 255, 255 }, "v",   "SLW" };
+            case PowerUpType::EnemyKillRandom: return { { 255,  70,  90, 255 }, "X",   "KIL" };
+            case PowerUpType::EnemyFireSlow:   return { { 255, 165,  80, 255 }, "!",   "EFR" };
+            case PowerUpType::EnemyAlly:       return { {  70, 255, 165, 255 }, "&",   "ALY" };
+            default:                           return { WHITE,                   "?",   "PWR" };
+        }
+    }
 }
 
 Renderer::~Renderer() {
@@ -84,7 +117,6 @@ bool Renderer::initialize() {
     m_sceneTarget = LoadRenderTexture(Constants::ARENA_WIDTH, Constants::ARENA_HEIGHT);
     SetTextureFilter(m_sceneTarget.texture, TEXTURE_FILTER_BILINEAR);
 
-    // Load GLSL 330 fragment shaders
     const std::string bgShaderPath   = resolveAssetPath("assets/shaders/background.fs");
     const std::string postShaderPath = resolveAssetPath("assets/shaders/postprocess.fs");
 
@@ -96,7 +128,6 @@ bool Renderer::initialize() {
     m_postTimeLoc       = GetShaderLocation(m_postShader, "uTime");
     m_postResolutionLoc = GetShaderLocation(m_postShader, "uResolution");
 
-    // Initialize constant resolution uniforms immediately
     const float resolution[2] = { Constants::ARENA_WIDTH_F, Constants::ARENA_HEIGHT_F };
     if (m_bgResolutionLoc >= 0) {
         SetShaderValue(m_bgShader, m_bgResolutionLoc, resolution, SHADER_UNIFORM_VEC2);
@@ -188,7 +219,6 @@ std::string Renderer::getDisplaySettingsLabel() const {
 }
 
 void Renderer::updateShaderUniforms(float elapsedTime) {
-    // Background shader renders inside the 1920x1080 offscreen arena target
     const float arenaRes[2] = {
         Constants::ARENA_WIDTH_F,
         Constants::ARENA_HEIGHT_F
@@ -225,7 +255,6 @@ void Renderer::updateParticles(const GameState& state, float dt) {
         const float exhaustX = ship.x + std::cos(backAngle) * (Constants::SHIP_RADIUS * 0.85f);
         const float exhaustY = ship.y + std::sin(backAngle) * (Constants::SHIP_RADIUS * 0.85f);
 
-        // Emit 3 particles per frame while thrusting
         for (int p = 0; p < 3; ++p) {
             const float spread = (static_cast<float>(GetRandomValue(-100, 100)) / 100.0f) * 0.45f;
             const float speed  = static_cast<float>(GetRandomValue(90, 210));
@@ -267,7 +296,7 @@ void Renderer::updateParticles(const GameState& state, float dt) {
             smoke.maxLife = static_cast<float>(GetRandomValue(42, 72)) / 100.0f;
             smoke.life    = smoke.maxLife;
             smoke.size    = static_cast<float>(GetRandomValue(55, 95)) / 10.0f;
-            smoke.ownerId = 3; // 3 = Overheat Cannon Smoke
+            smoke.ownerId = 3; // Overheat Cannon Smoke
             m_particles.push_back(smoke);
         }
     }
@@ -299,7 +328,7 @@ void Renderer::updateParticles(const GameState& state, float dt) {
             part.maxLife = static_cast<float>(GetRandomValue(20, 42)) / 100.0f;
             part.life    = part.maxLife;
             part.size    = static_cast<float>(GetRandomValue(30, 55)) / 10.0f;
-            part.ownerId = 2; // 2 = Fiery Orange Comet Particle
+            part.ownerId = 2; // Fiery Orange Comet Particle
             m_particles.push_back(part);
         }
     }
@@ -325,14 +354,12 @@ void Renderer::drawArenaBorder() {
         Constants::ARENA_HEIGHT_F - pad * 2.0f
     };
 
-    // Outer soft halo & crisp inner border line
     DrawRectangleLinesEx(
         { outerRect.x - 2.0f, outerRect.y - 2.0f, outerRect.width + 4.0f, outerRect.height + 4.0f },
         4.0f,
         { 30, 90, 220, 75 });
     DrawRectangleLinesEx(outerRect, 2.0f, NEON_BORDER);
 
-    // Subtle center arena divider line and center circle
     const float centerX = Constants::ARENA_WIDTH_F * 0.5f;
     const float centerY = Constants::ARENA_HEIGHT_F * 0.5f;
     DrawLineEx({ centerX, pad }, { centerX, Constants::ARENA_HEIGHT_F - pad }, 1.5f, { 45, 95, 190, 65 });
@@ -345,7 +372,6 @@ void Renderer::drawParticles() {
         const unsigned char alpha = static_cast<unsigned char>(ratio * 240.0f);
 
         if (part.ownerId == 3) {
-            // Overheat smoke expands as it dissipates
             const float puffRadius = part.size * (1.75f - ratio * 0.65f);
             const Color smokeOuter = { 155, 160, 175, static_cast<unsigned char>(ratio * 155.0f) };
             const Color smokeCore  = { 215, 195, 185, static_cast<unsigned char>(ratio * 105.0f) };
@@ -379,7 +405,6 @@ void Renderer::drawComets(const GameState& state) {
         const float lifeRatio = std::clamp(comet.lifetime / std::max(comet.maxLife, 0.01f), 0.0f, 1.0f);
         const Vector2 center = { comet.x, comet.y };
 
-        // Glowing plasma tail streaks opposite velocity vector
         const float speed = std::sqrt(comet.vx * comet.vx + comet.vy * comet.vy);
         if (speed > 1.0f) {
             const float dirX = -comet.vx / speed;
@@ -397,15 +422,24 @@ void Renderer::drawComets(const GameState& state) {
             DrawLineEx(center, tailEnd, 2.5f, { 255, 230, 150, 220 });
         }
 
-        // Outer neon orange glow & rotating hexagon core
         DrawCircleV(center, comet.radius * 1.25f, { 255, 95, 15, 85 });
         DrawPolyLinesEx(center, 6, comet.radius, elapsed * 140.0f + i * 60.0f, 3.2f, { 255, 165, 35, 255 });
         DrawPolyLinesEx(center, 6, comet.radius * 0.65f, -elapsed * 180.0f, 2.0f, { 255, 235, 180, 255 });
         DrawCircleV(center, comet.radius * 0.30f, WHITE);
 
-        // Remaining lifetime arc around comet
         DrawRing(center, comet.radius + 4.0f, comet.radius + 6.0f,
                  0.0f, 360.0f * lifeRatio, 24, { 255, 200, 80, 170 });
+
+        // 3-hit destructible HP pips above comet
+        const float pipW = 10.0f;
+        const float pipGap = 3.0f;
+        const float totalW = Constants::COMET_MAX_HP * pipW + (Constants::COMET_MAX_HP - 1) * pipGap;
+        const float startX = comet.x - totalW * 0.5f;
+        const float pipY = comet.y - comet.radius - 14.0f;
+        for (int h = 0; h < Constants::COMET_MAX_HP; ++h) {
+            const Rectangle pip = { startX + h * (pipW + pipGap), pipY, pipW, 4.0f };
+            DrawRectangleRec(pip, (h < comet.hp) ? Color{ 255, 195, 70, 240 } : Color{ 60, 35, 25, 150 });
+        }
     }
 }
 
@@ -418,61 +452,114 @@ void Renderer::drawPowerUps(const GameState& state) {
             continue;
         }
 
-        Color puColor = WHITE;
-        const char* label = "PWR";
-
-        switch (static_cast<PowerUpType>(pu.type)) {
-            case PowerUpType::FireRateBoost:
-                puColor = { 255, 215,  40, 255 }; // Gold
-                label   = "FR+";
-                break;
-            case PowerUpType::SpeedBoost:
-                puColor = {  50, 255, 130, 255 }; // Neon Green
-                label   = "SPD";
-                break;
-            case PowerUpType::Shotgun:
-                puColor = { 255, 120,  35, 255 }; // Neon Orange
-                label   = "SGN";
-                break;
-            case PowerUpType::StealthImmortal:
-                puColor = { 175, 130, 255, 255 }; // Electric Violet
-                label   = "INV";
-                break;
-            case PowerUpType::BouncyBullets:
-                puColor = {  80, 255, 230, 255 }; // Aqua Lime
-                label   = "BNC";
-                break;
-            case PowerUpType::ExtraLife:
-                puColor = { 255,  75, 110, 255 }; // Crimson Pink
-                label   = "+HP";
-                break;
-            case PowerUpType::FullAmmo:
-                puColor = {  90, 210, 255, 255 }; // Sky Cyan-Gold
-                label   = "AMO";
-                break;
-            default:
-                break;
-        }
-
+        const PowerUpVisualInfo info = getPowerUpVisual(static_cast<PowerUpType>(pu.type));
         const Vector2 center = { pu.x, pu.y };
         const float pulse = 1.0f + 0.12f * std::sin(elapsed * 6.0f + i * 2.0f);
         const float r = Constants::POWERUP_RADIUS * pulse;
         const float lifeRatio = std::clamp(pu.lifetime / Constants::POWERUP_MAP_LIFETIME, 0.0f, 1.0f);
 
-        Color glowCol = puColor;
+        Color glowCol = info.color;
         glowCol.a = 80;
         DrawCircleV(center, r * 1.35f, glowCol);
 
-        // Rotating neon diamond frame
-        DrawPolyLinesEx(center, 4, r, elapsed * 90.0f, 2.8f, puColor);
+        DrawPolyLinesEx(center, 4, r, elapsed * 90.0f, 2.8f, info.color);
         DrawCircleLinesV(center, r * 0.78f, WHITE);
 
-        // 6-second decay progress ring
-        DrawRing(center, r + 5.0f, r + 7.5f, -90.0f, -90.0f + 360.0f * lifeRatio, 28, puColor);
+        DrawRing(center, r + 5.0f, r + 7.5f, -90.0f, -90.0f + 360.0f * lifeRatio, 28, info.color);
 
         const int fontSize = 14;
-        const int textW = MeasureText(label, fontSize);
-        DrawText(label, static_cast<int>(pu.x) - textW / 2, static_cast<int>(pu.y) - fontSize / 2, fontSize, WHITE);
+        const int textW = MeasureText(info.shortName, fontSize);
+        DrawText(info.shortName, static_cast<int>(pu.x) - textW / 2, static_cast<int>(pu.y) - fontSize / 2, fontSize, WHITE);
+    }
+}
+
+void Renderer::drawEnemies(const GameState& state) {
+    const float elapsed = static_cast<float>(GetTime());
+
+    for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+        const EnemyState& enemy = state.enemies[i];
+        if (!enemy.active) {
+            continue;
+        }
+
+        const bool isAlly = (enemy.allyTimer > 0.0f);
+        const bool isBoss = (enemy.isBoss != 0);
+        const float r = isBoss ? Constants::ENEMY_BOSS_RADIUS : Constants::ENEMY_RADIUS;
+
+        Color mainCol = isAlly ? ALLY_MINT : (isBoss ? ENEMY_BOSS_GOLD : ENEMY_CRIMSON);
+        Color glowCol = mainCol;
+        glowCol.a = 100;
+
+        const float c = std::cos(enemy.angle);
+        const float s = std::sin(enemy.angle);
+        auto toWorld = [&](float lx, float ly) -> Vector2 {
+            return {
+                enemy.x + (lx * c - ly * s),
+                enemy.y + (lx * s + ly * c)
+            };
+        };
+
+        if (isBoss) {
+            // Larger multi-ring Heavy Boss Warship
+            const Vector2 nose   = toWorld( r * 1.25f,  0.0f);
+            const Vector2 lw1    = toWorld( r * 0.15f, -r * 1.05f);
+            const Vector2 rw1    = toWorld( r * 0.15f,  r * 1.05f);
+            const Vector2 lw2    = toWorld(-r * 0.95f, -r * 0.75f);
+            const Vector2 rw2    = toWorld(-r * 0.95f,  r * 0.75f);
+            const Vector2 tail   = toWorld(-r * 0.55f,  0.0f);
+
+            DrawPolyLinesEx({ enemy.x, enemy.y }, 8, r * 1.08f, elapsed * 45.0f, 3.0f, glowCol);
+            DrawLineEx(nose, lw1, 4.5f, mainCol);
+            DrawLineEx(lw1, lw2,  4.5f, mainCol);
+            DrawLineEx(lw2, tail, 4.5f, mainCol);
+            DrawLineEx(tail, rw2, 4.5f, mainCol);
+            DrawLineEx(rw2, rw1,  4.5f, mainCol);
+            DrawLineEx(rw1, nose, 4.5f, mainCol);
+            DrawCircleV({ enemy.x, enemy.y }, r * 0.35f, isAlly ? ALLY_MINT : ENEMY_CRIMSON);
+            DrawCircleV({ enemy.x, enemy.y }, r * 0.18f, WHITE);
+        } else {
+            // Normal Wave Enemy Interceptor
+            const Vector2 nose   = toWorld( r * 1.20f,  0.0f);
+            const Vector2 leftW  = toWorld(-r * 0.85f, -r * 0.85f);
+            const Vector2 rightW = toWorld(-r * 0.85f,  r * 0.85f);
+            const Vector2 back   = toWorld(-r * 0.35f,  0.0f);
+
+            DrawLineEx(nose, leftW,   5.0f, glowCol);
+            DrawLineEx(leftW, back,   5.0f, glowCol);
+            DrawLineEx(back, rightW,  5.0f, glowCol);
+            DrawLineEx(rightW, nose,  5.0f, glowCol);
+
+            DrawLineEx(nose, leftW,   2.5f, mainCol);
+            DrawLineEx(leftW, back,   2.5f, mainCol);
+            DrawLineEx(back, rightW,  2.5f, mainCol);
+            DrawLineEx(rightW, nose,  2.5f, mainCol);
+            DrawCircleV({ enemy.x, enemy.y }, 3.0f, WHITE);
+        }
+
+        if (isAlly) {
+            DrawRing({ enemy.x, enemy.y }, r + 6.0f, r + 8.5f, 0.0f, 360.0f, 28, ALLY_MINT);
+            const std::string allyTag = "ALLY " + std::to_string(static_cast<int>(std::ceil(enemy.allyTimer))) + "s";
+            const int tw = MeasureText(allyTag.c_str(), 13);
+            DrawText(allyTag.c_str(), static_cast<int>(enemy.x) - tw / 2, static_cast<int>(enemy.y - r - 28.0f), 13, ALLY_MINT);
+        }
+
+        // Segmented Health Lines above Enemy / Boss (shows HP lines increasing every 2nd wave)
+        const int maxHp = std::max<int>(1, enemy.maxHp);
+        const float segW = isBoss ? 12.0f : 10.0f;
+        const float segH = isBoss ? 6.0f : 4.5f;
+        const float gap  = 2.0f;
+        const float barW = maxHp * segW + (maxHp - 1) * gap;
+        const float startX = enemy.x - barW * 0.5f;
+        const float barY   = enemy.y - r - 13.0f;
+
+        for (int h = 0; h < maxHp; ++h) {
+            const Rectangle seg = { startX + h * (segW + gap), barY, segW, segH };
+            if (h < enemy.hp) {
+                DrawRectangleRec(seg, mainCol);
+            } else {
+                DrawRectangleRec(seg, { 40, 20, 30, 160 });
+            }
+        }
     }
 }
 
@@ -481,10 +568,9 @@ void Renderer::drawVectorShip(const ShipState& ship, int playerId, bool isLocalV
         return;
     }
 
-    // Power-up #4: Invisible & Immortal for 6 seconds
     const bool isStealthed = (ship.stealthTimer > 0.0f);
     if (isStealthed && !isLocalViewer) {
-        return; // Completely invisible to the opposing player
+        return;
     }
 
     Color mainColor = (playerId == 0) ? NEON_CYAN      : NEON_MAGENTA;
@@ -512,7 +598,6 @@ void Renderer::drawVectorShip(const ShipState& ship, int playerId, bool isLocalV
     }
 
     if (isStealthed) {
-        // Local player sees a translucent cloaked ghost outline of their own ship
         mainColor.a = 75;
         glowColor.a = 35;
         coreColor.a = 90;
@@ -523,7 +608,6 @@ void Renderer::drawVectorShip(const ShipState& ship, int playerId, bool isLocalV
     const float c = std::cos(ship.angle);
     const float s = std::sin(ship.angle);
 
-    // Helper lambda to transform ship-local coordinates to world space (with vibration offset)
     auto toWorld = [&](float lx, float ly) -> Vector2 {
         return {
             drawX + (lx * c - ly * s),
@@ -532,47 +616,120 @@ void Renderer::drawVectorShip(const ShipState& ship, int playerId, bool isLocalV
     };
 
     const float r = Constants::SHIP_RADIUS;
-    const Vector2 nose      = toWorld( r * 1.25f,  0.0f);
-    const Vector2 leftWing  = toWorld(-r * 0.95f, -r * 0.90f);
-    const Vector2 rightWing = toWorld(-r * 0.95f,  r * 0.90f);
-    const Vector2 tailIndent = toWorld(-r * 0.45f, 0.0f);
-    const Vector2 cockpit   = toWorld( r * 0.35f,  0.0f);
+    const Vector2 nose       = toWorld( r * 1.25f,  0.0f);
+    const Vector2 leftWing   = toWorld(-r * 0.95f, -r * 0.90f);
+    const Vector2 rightWing  = toWorld(-r * 0.95f,  r * 0.90f);
+    const Vector2 tailIndent = toWorld(-r * 0.45f,  0.0f);
+    const Vector2 cockpit    = toWorld( r * 0.35f,  0.0f);
 
-    // 1. Outer thick glow wireframe
     DrawLineEx(nose, leftWing,   6.0f, glowColor);
     DrawLineEx(leftWing, tailIndent, 6.0f, glowColor);
     DrawLineEx(tailIndent, rightWing, 6.0f, glowColor);
     DrawLineEx(rightWing, nose,  6.0f, glowColor);
 
-    // 2. Primary neon vector hull lines
     DrawLineEx(nose, leftWing,   2.8f, mainColor);
     DrawLineEx(leftWing, tailIndent, 2.8f, mainColor);
     DrawLineEx(tailIndent, rightWing, 2.8f, mainColor);
     DrawLineEx(rightWing, nose,  2.8f, mainColor);
 
-    // 3. Inner bright core lines & cockpit diamond
     DrawLineEx(nose, cockpit, 1.8f, coreColor);
     DrawLineEx(cockpit, leftWing, 1.4f, glowColor);
     DrawLineEx(cockpit, rightWing, 1.4f, glowColor);
     DrawCircleV(cockpit, 3.0f, coreColor);
 
-    // 4. Engine thruster flare when thrusting
     if (ship.isThrusting) {
         const float flicker = static_cast<float>(GetRandomValue(85, 135)) / 100.0f;
-        const Vector2 flameTip  = toWorld(-r * (1.35f * flicker), 0.0f);
-        const Vector2 flameLeft = toWorld(-r * 0.55f, -r * 0.32f);
-        const Vector2 flameRight = toWorld(-r * 0.55f, r * 0.32f);
+        const Vector2 flameTip   = toWorld(-r * (1.35f * flicker), 0.0f);
+        const Vector2 flameLeft  = toWorld(-r * 0.55f, -r * 0.32f);
+        const Vector2 flameRight = toWorld(-r * 0.55f,  r * 0.32f);
 
         DrawLineEx(flameLeft, flameTip,  3.5f, mainColor);
         DrawLineEx(flameRight, flameTip, 3.5f, mainColor);
         DrawLineEx(tailIndent, flameTip, 2.0f, WHITE);
     }
 
-    // 5. Glowing overheated cannon tip on the nose when smoking
     if (ship.overheatSmokeTimer > 0.0f) {
         const float glowPulse = 0.7f + 0.3f * std::sin(static_cast<float>(GetTime()) * 22.0f);
         DrawCircleV(nose, 6.5f * glowPulse, { 255, 70, 20, 170 });
         DrawCircleV(nose, 3.0f, { 255, 210, 140, 240 });
+    }
+
+    // Blue Bubble Shield (2 health lines absorbed before disappearing)
+    if (ship.shieldHp > 0) {
+        const float bubbleR = r + 13.0f;
+        const float pulse = 1.0f + 0.05f * std::sin(static_cast<float>(GetTime()) * 7.0f);
+        DrawCircleV({ drawX, drawY }, bubbleR * pulse, { 40, 155, 255, 42 });
+        DrawRing({ drawX, drawY }, bubbleR * pulse - 1.5f, bubbleR * pulse + 1.0f,
+                 0.0f, 360.0f, 36, SHIELD_BLUE);
+        if (ship.shieldHp >= 2) {
+            DrawRing({ drawX, drawY }, bubbleR * pulse + 3.5f, bubbleR * pulse + 5.0f,
+                     0.0f, 360.0f, 36, { 150, 230, 255, 160 });
+        }
+    }
+
+    drawShipPowerUpBadges(ship, playerId, isLocalViewer);
+}
+
+void Renderer::drawShipPowerUpBadges(const ShipState& ship, int /*playerId*/, bool isLocalViewer) {
+    if (!ship.active) {
+        return;
+    }
+    if (ship.stealthTimer > 0.0f && !isLocalViewer) {
+        return;
+    }
+
+    struct BadgeEntry {
+        Color       color;
+        std::string text;
+    };
+    std::vector<BadgeEntry> badges;
+    badges.reserve(7);
+
+    auto addBadge = [&](PowerUpType type, const std::string& suffix) {
+        const PowerUpVisualInfo info = getPowerUpVisual(type);
+        badges.push_back({ info.color, std::string(info.symbol) + " " + info.shortName + suffix });
+    };
+
+    if (ship.fireRateTimer > 0.0f) {
+        addBadge(PowerUpType::FireRateBoost, " " + std::to_string(static_cast<int>(std::ceil(ship.fireRateTimer))) + "s");
+    }
+    if (ship.speedBoostTimer > 0.0f) {
+        addBadge(PowerUpType::SpeedBoost, " " + std::to_string(static_cast<int>(std::ceil(ship.speedBoostTimer))) + "s");
+    }
+    if (ship.stealthTimer > 0.0f) {
+        addBadge(PowerUpType::StealthImmortal, " " + std::to_string(static_cast<int>(std::ceil(ship.stealthTimer))) + "s");
+    }
+    if (ship.shotgunShotsLeft > 0) {
+        addBadge(PowerUpType::Shotgun, " x" + std::to_string(ship.shotgunShotsLeft));
+    }
+    if (ship.bouncyShotsLeft > 0) {
+        addBadge(PowerUpType::BouncyBullets, " x" + std::to_string(ship.bouncyShotsLeft));
+    }
+    if (ship.radialShotsLeft > 0) {
+        addBadge(PowerUpType::RadialBurst, " x" + std::to_string(ship.radialShotsLeft));
+    }
+    if (ship.shieldHp > 0) {
+        addBadge(PowerUpType::ShieldBubble, " x" + std::to_string(ship.shieldHp));
+    }
+
+    if (badges.empty()) {
+        return;
+    }
+
+    const int fontSize = 14;
+    const float baseOffset = Constants::SHIP_RADIUS + ((ship.shieldHp > 0) ? 26.0f : 18.0f);
+    float y = ship.y - baseOffset;
+
+    for (const BadgeEntry& b : badges) {
+        const int tw = MeasureText(b.text.c_str(), fontSize);
+        const int tx = static_cast<int>(ship.x) - tw / 2;
+        const int ty = static_cast<int>(y) - fontSize;
+
+        DrawRectangleRounded(
+            { static_cast<float>(tx - 5), static_cast<float>(ty - 2), static_cast<float>(tw + 10), static_cast<float>(fontSize + 4) },
+            0.3f, 4, { 8, 12, 26, 175 });
+        DrawText(b.text.c_str(), tx, ty, fontSize, b.color);
+        y -= (fontSize + 6.0f);
     }
 }
 
@@ -583,10 +740,19 @@ void Renderer::drawBullets(const GameState& state) {
             continue;
         }
 
-        const Color mainColor = (b.ownerId == 0) ? NEON_CYAN      : NEON_MAGENTA;
-        const Color glowColor = (b.ownerId == 0) ? NEON_CYAN_GLOW : NEON_MAG_GLOW;
+        Color mainColor = NEON_CYAN;
+        Color glowColor = NEON_CYAN_GLOW;
+        if (b.ownerId == 1) {
+            mainColor = NEON_MAGENTA;
+            glowColor = NEON_MAG_GLOW;
+        } else if (b.ownerId == 2) {
+            mainColor = ENEMY_CRIMSON;
+            glowColor = { 255, 50, 30, 120 };
+        } else if (b.ownerId == 3) {
+            mainColor = ALLY_MINT;
+            glowColor = { 60, 255, 160, 120 };
+        }
 
-        // Velocity trail vector
         const Vector2 head = { b.x, b.y };
         const Vector2 tail = { b.x - b.vx * 0.028f, b.y - b.vy * 0.028f };
 
@@ -609,10 +775,11 @@ void Renderer::drawHUD(const GameState& state,
                        uint32_t pingMs) {
     const ShipState& p1 = state.ships[0];
     const ShipState& p2 = state.ships[1];
+    const bool isCoop = (state.gameMode == static_cast<uint8_t>(GameMode::CoopWaves));
     const bool redAlertPulse = (std::sin(static_cast<float>(GetTime()) * 24.0f) > 0.0f);
 
     // -------------------------------------------------------------------------
-    // Player 1 (Left - Cyan) Health Bar & Label
+    // Player 1 (Left - Cyan) Health Bar & Shield Pips
     // -------------------------------------------------------------------------
     const int hudY = 28;
     const int p1X  = 36;
@@ -635,8 +802,16 @@ void Renderer::drawHUD(const GameState& state,
         }
     }
 
+    if (p1.shieldHp > 0) {
+        for (int s = 0; s < p1.shieldHp; ++s) {
+            const Rectangle sSeg = { static_cast<float>(p1X + 162 + s * 24), static_cast<float>(hudY + 26), 18.0f, 14.0f };
+            DrawRectangleRec(sSeg, SHIELD_BLUE);
+            DrawRectangleLinesEx(sSeg, 1.5f, WHITE);
+        }
+    }
+
     // -------------------------------------------------------------------------
-    // Player 2 (Right - Magenta) Health Bar & Label
+    // Player 2 (Right - Magenta) Health Bar & Shield Pips
     // -------------------------------------------------------------------------
     const char* p2Label = "P2 [CLIENT - MAGENTA]";
     const int p2LabelWidth = MeasureText(p2Label, 18);
@@ -660,6 +835,14 @@ void Renderer::drawHUD(const GameState& state,
         }
     }
 
+    if (p2.shieldHp > 0) {
+        for (int s = 0; s < p2.shieldHp; ++s) {
+            const Rectangle sSeg = { static_cast<float>(p2RightEdge - 180 - s * 24), static_cast<float>(hudY + 26), 18.0f, 14.0f };
+            DrawRectangleRec(sSeg, SHIELD_BLUE);
+            DrawRectangleLinesEx(sSeg, 1.5f, WHITE);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Shooting Energy / Overheat Bars (directly beneath health bars)
     // -------------------------------------------------------------------------
@@ -672,9 +855,9 @@ void Renderer::drawHUD(const GameState& state,
         if (ship.overheatSmokeTimer > 0.0f) {
             fillColor = redAlertPulse ? Color{ 255, 45, 55, 255 } : Color{ 190, 30, 35, 255 };
         } else if (ship.ammoOverheated) {
-            fillColor = { 255, 110, 45, 255 }; // Orange-red slow-recharge penalty indicator
+            fillColor = { 255, 110, 45, 255 };
         } else if (ratio < 0.28f) {
-            fillColor = { 255, 200, 60, 255 }; // Low ammo warning
+            fillColor = { 255, 200, 60, 255 };
         }
 
         const float fillW = width * ratio;
@@ -706,9 +889,13 @@ void Renderer::drawHUD(const GameState& state,
     drawAmmoBar(p1, static_cast<float>(p1X), barY, barWidth, false, { 90, 245, 255, 255 });
     drawAmmoBar(p2, static_cast<float>(p2RightEdge) - barWidth, barY, barWidth, true, { 255, 100, 225, 255 });
 
-    // Active Power-Up Status Lists under Shooting Bars
-    auto formatActivePowerUps = [](const ShipState& s) -> std::string {
+    auto formatActivePowerUps = [&](const ShipState& s) -> std::string {
         std::string list;
+        if (s.shieldHp > 0) {
+            list += "[SHD x" + std::to_string(s.shieldHp) + "] ";
+        } else if (s.shieldCooldownTimer > 0.0f) {
+            list += "[SHD CD " + std::to_string(static_cast<int>(std::ceil(s.shieldCooldownTimer))) + "s] ";
+        }
         if (s.fireRateTimer > 0.0f) {
             list += "[FR+ " + std::to_string(static_cast<int>(std::ceil(s.fireRateTimer))) + "s] ";
         }
@@ -716,13 +903,19 @@ void Renderer::drawHUD(const GameState& state,
             list += "[SPD+ " + std::to_string(static_cast<int>(std::ceil(s.speedBoostTimer))) + "s] ";
         }
         if (s.stealthTimer > 0.0f) {
-            list += "[STEALTH " + std::to_string(static_cast<int>(std::ceil(s.stealthTimer))) + "s] ";
+            list += "[INV " + std::to_string(static_cast<int>(std::ceil(s.stealthTimer))) + "s] ";
         }
         if (s.shotgunShotsLeft > 0) {
-            list += "[SHOTGUN x" + std::to_string(s.shotgunShotsLeft) + "] ";
+            list += "[SGN x" + std::to_string(s.shotgunShotsLeft) + "] ";
         }
         if (s.bouncyShotsLeft > 0) {
-            list += "[BOUNCE x" + std::to_string(s.bouncyShotsLeft) + "] ";
+            list += "[BNC x" + std::to_string(s.bouncyShotsLeft) + "] ";
+        }
+        if (s.radialShotsLeft > 0) {
+            list += "[360 x" + std::to_string(s.radialShotsLeft) + "] ";
+        }
+        if (isCoop && s.allyHealHits > 0) {
+            list += "[ALLY HEAL " + std::to_string(s.allyHealHits) + "/2] ";
         }
         return list;
     };
@@ -741,20 +934,48 @@ void Renderer::drawHUD(const GameState& state,
     }
 
     // -------------------------------------------------------------------------
-    // Center Scoreboard
+    // Center Scoreboard / Co-op Wave Counter
     // -------------------------------------------------------------------------
-    const std::string scoreText = std::to_string(p1.score) + "   :   " + std::to_string(p2.score);
-    const int scoreFontSize = 36;
-    const int scoreWidth = MeasureText(scoreText.c_str(), scoreFontSize);
     const int centerX = Constants::ARENA_WIDTH / 2;
+    if (isCoop) {
+        const std::string waveText = "WAVE " + std::to_string(state.currentWave) +
+                                     "   |   REMAINING: " + std::to_string(state.waveRemainingKills);
+        const int wFont = 26;
+        const int wTextW = MeasureText(waveText.c_str(), wFont);
+        const float boxW = static_cast<float>(wTextW + 52);
 
-    DrawRectangleRounded(
-        { static_cast<float>(centerX - 95), 22.0f, 190.0f, 52.0f },
-        0.25f, 8, HUD_BG_DARK);
-    DrawRectangleRoundedLinesEx(
-        { static_cast<float>(centerX - 95), 22.0f, 190.0f, 52.0f },
-        0.25f, 8, 1.5f, NEON_BORDER);
-    DrawText(scoreText.c_str(), centerX - scoreWidth / 2, 31, scoreFontSize, WHITE);
+        DrawRectangleRounded(
+            { static_cast<float>(centerX) - boxW * 0.5f, 22.0f, boxW, 50.0f },
+            0.25f, 8, HUD_BG_DARK);
+        DrawRectangleRoundedLinesEx(
+            { static_cast<float>(centerX) - boxW * 0.5f, 22.0f, boxW, 50.0f },
+            0.25f, 8, 1.5f, state.bossActive ? ENEMY_BOSS_GOLD : NEON_CYAN);
+        DrawText(waveText.c_str(), centerX - wTextW / 2, 34, wFont, state.bossActive ? ENEMY_BOSS_GOLD : WHITE);
+
+        std::string globalDebuffs;
+        if (state.enemySlowTimer > 0.0f) {
+            globalDebuffs += "[ENEMIES -30% SPD " + std::to_string(static_cast<int>(std::ceil(state.enemySlowTimer))) + "s]  ";
+        }
+        if (state.enemyFireSlowTimer > 0.0f) {
+            globalDebuffs += "[ENEMIES -30% FIRE " + std::to_string(static_cast<int>(std::ceil(state.enemyFireSlowTimer))) + "s]  ";
+        }
+        if (!globalDebuffs.empty()) {
+            const int gdW = MeasureText(globalDebuffs.c_str(), 16);
+            DrawText(globalDebuffs.c_str(), centerX - gdW / 2, 78, 16, { 120, 225, 255, 245 });
+        }
+    } else {
+        const std::string scoreText = std::to_string(p1.score) + "   :   " + std::to_string(p2.score);
+        const int scoreFontSize = 36;
+        const int scoreWidth = MeasureText(scoreText.c_str(), scoreFontSize);
+
+        DrawRectangleRounded(
+            { static_cast<float>(centerX - 95), 22.0f, 190.0f, 52.0f },
+            0.25f, 8, HUD_BG_DARK);
+        DrawRectangleRoundedLinesEx(
+            { static_cast<float>(centerX - 95), 22.0f, 190.0f, 52.0f },
+            0.25f, 8, 1.5f, NEON_BORDER);
+        DrawText(scoreText.c_str(), centerX - scoreWidth / 2, 31, scoreFontSize, WHITE);
+    }
 
     // Role & Network Status Bar at bottom
     const std::string roleBadge = isHost ? "[ROLE: HOST (P1 - CYAN)]  " : "[ROLE: CLIENT (P2 - MAGENTA)]  ";
@@ -762,7 +983,6 @@ void Renderer::drawHUD(const GameState& state,
     const Color statusCol = isConnected ? Color{ 120, 255, 180, 220 } : Color{ 255, 215, 100, 220 };
     DrawText(footer.c_str(), 36, Constants::ARENA_HEIGHT - 44, 16, statusCol);
 
-    // Performance & Latency Telemetry (bottom right)
     const std::string telemetry = isConnected
         ? ("FPS: " + std::to_string(GetFPS()) + "  |  PING: " + std::to_string(pingMs) + " ms")
         : ("FPS: " + std::to_string(GetFPS()));
@@ -773,46 +993,112 @@ void Renderer::drawHUD(const GameState& state,
     DrawText(telemetry.c_str(), Constants::ARENA_WIDTH - 36 - telWidth, Constants::ARENA_HEIGHT - 44, 16, telColor);
 
     // -------------------------------------------------------------------------
-    // Round Winner Announcement Banner
+    // Center Round / Wave Announcement Banner
     // -------------------------------------------------------------------------
-    if (state.roundBannerTimer > 0.0f && state.lastRoundWinner < 2) {
-        const bool p1Won = (state.lastRoundWinner == 0);
-        const char* bannerMsg = p1Won
-            ? "PLAYER 1 (CYAN) SCORES!  -  NEXT ROUND"
-            : "PLAYER 2 (MAGENTA) SCORES!  -  NEXT ROUND";
-        const Color bannerCol = p1Won ? NEON_CYAN : NEON_MAGENTA;
+    if (state.roundBannerTimer > 0.0f) {
+        std::string bannerMsg;
+        Color bannerCol = NEON_CYAN;
 
-        const int bFontSize = 28;
-        const int bWidth = MeasureText(bannerMsg, bFontSize);
-        const float boxW = static_cast<float>(bWidth + 48);
-        const float boxX = (Constants::ARENA_WIDTH_F - boxW) * 0.5f;
-        const float boxY = 100.0f;
+        if (state.bannerCode == 0 && state.lastRoundWinner < 2) {
+            const bool p1Won = (state.lastRoundWinner == 0);
+            bannerMsg = p1Won
+                ? "PLAYER 1 (CYAN) SCORES!  -  NEXT ROUND"
+                : "PLAYER 2 (MAGENTA) SCORES!  -  NEXT ROUND";
+            bannerCol = p1Won ? NEON_CYAN : NEON_MAGENTA;
+        } else if (state.bannerCode == 1) {
+            bannerMsg = "WAVE " + std::to_string(state.currentWave) + "  -  INCOMING HOSTILES!";
+            bannerCol = NEON_CYAN;
+        } else if (state.bannerCode == 2) {
+            bannerMsg = "WARNING: WAVE BOSS APPROACHING!";
+            bannerCol = ENEMY_BOSS_GOLD;
+        } else if (state.bannerCode == 3) {
+            bannerMsg = "WAVE " + std::to_string(state.currentWave) + " CLEARED!";
+            bannerCol = ALLY_MINT;
+        } else if (state.bannerCode == 4) {
+            bannerMsg = "SQUAD WIPED  -  RESTARTING WAVE 1";
+            bannerCol = ENEMY_CRIMSON;
+        }
 
-        DrawRectangleRounded({ boxX, boxY, boxW, 50.0f }, 0.2f, 8, HUD_BG_DARK);
-        DrawRectangleRoundedLinesEx({ boxX, boxY, boxW, 50.0f }, 0.2f, 8, 2.0f, bannerCol);
-        DrawText(bannerMsg, centerX - bWidth / 2, static_cast<int>(boxY + 11.0f), bFontSize, bannerCol);
+        if (!bannerMsg.empty()) {
+            const int bFontSize = 28;
+            const int bWidth = MeasureText(bannerMsg.c_str(), bFontSize);
+            const float boxW = static_cast<float>(bWidth + 48);
+            const float boxX = (Constants::ARENA_WIDTH_F - boxW) * 0.5f;
+            const float boxY = 104.0f;
+
+            DrawRectangleRounded({ boxX, boxY, boxW, 50.0f }, 0.2f, 8, HUD_BG_DARK);
+            DrawRectangleRoundedLinesEx({ boxX, boxY, boxW, 50.0f }, 0.2f, 8, 2.0f, bannerCol);
+            DrawText(bannerMsg.c_str(), centerX - bWidth / 2, static_cast<int>(boxY + 11.0f), bFontSize, bannerCol);
+        }
     }
 }
 
-void Renderer::renderMenu(const std::string& ipInput, const std::string& statusMessage) {
+void Renderer::renderIntro(float elapsedSeconds) {
+    const float t = std::clamp(elapsedSeconds, 0.0f, Constants::INTRO_DURATION);
+
+    // Smooth fade in (0.0s -> 1.7s), hold (1.7s -> 3.3s), fade out (3.3s -> 5.0s)
+    float alpha = 1.0f;
+    if (t < 1.7f) {
+        const float u = t / 1.7f;
+        alpha = u * u * (3.0f - 2.0f * u);
+    } else if (t > 3.3f) {
+        const float u = std::clamp((Constants::INTRO_DURATION - t) / 1.7f, 0.0f, 1.0f);
+        alpha = u * u * (3.0f - 2.0f * u);
+    }
+
+    const unsigned char aByte = static_cast<unsigned char>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f);
+    const unsigned char glowByte = static_cast<unsigned char>(std::clamp(alpha, 0.0f, 1.0f) * 140.0f);
+
+    const float screenW = static_cast<float>(GetScreenWidth());
+    const float screenH = static_cast<float>(GetScreenHeight());
+    const float scale   = std::min(screenW / Constants::ARENA_WIDTH_F, screenH / Constants::ARENA_HEIGHT_F);
+    const float offsetX = (screenW - Constants::ARENA_WIDTH_F * scale) * 0.5f;
+    const float offsetY = (screenH - Constants::ARENA_HEIGHT_F * scale) * 0.5f;
+
+    BeginDrawing();
+    ClearBackground(BLACK);
+
+    Camera2D uiCamera{};
+    uiCamera.offset = { offsetX, offsetY };
+    uiCamera.target = { 0.0f, 0.0f };
+    uiCamera.rotation = 0.0f;
+    uiCamera.zoom = scale;
+    BeginMode2D(uiCamera);
+
+    const char* studioTitle = "NOVAK AND ERIK PRODUCTIONS";
+    const int fontSize = 54;
+    const int textW = MeasureText(studioTitle, fontSize);
+    const int centerX = Constants::ARENA_WIDTH / 2;
+    const int centerY = Constants::ARENA_HEIGHT / 2;
+
+    DrawText(studioTitle, centerX - textW / 2 + 2, centerY - 26 + 2, fontSize, { 0, 200, 255, glowByte });
+    DrawText(studioTitle, centerX - textW / 2, centerY - 26, fontSize, { 240, 250, 255, aByte });
+
+    const char* presents = "PRESENTS";
+    const int presW = MeasureText(presents, 22);
+    DrawText(presents, centerX - presW / 2, centerY + 42, 22, { 255, 60, 200, aByte });
+
+    EndMode2D();
+    EndDrawing();
+}
+
+void Renderer::renderMenu(const std::string& ipInput, GameMode selectedMode, const std::string& statusMessage) {
     const float elapsed = static_cast<float>(GetTime());
     updateShaderUniforms(elapsed);
 
-    // 1. Render background shader & decorative orbiting ships to offscreen RenderTexture2D
     BeginTextureMode(m_sceneTarget);
     ClearBackground(BLACK);
 
     drawBackgroundShader();
     drawArenaBorder();
 
-    // Decorative orbiting preview ships on the menu background
     ShipState demoCyan{};
     demoCyan.x = Constants::ARENA_WIDTH_F * 0.22f + std::cos(elapsed * 1.4f) * 35.0f;
     demoCyan.y = Constants::ARENA_HEIGHT_F * 0.52f + std::sin(elapsed * 1.4f) * 35.0f;
     demoCyan.angle = elapsed * 1.4f + 1.5708f;
     demoCyan.isThrusting = 1;
     demoCyan.active = 1;
-    drawVectorShip(demoCyan, 0);
+    drawVectorShip(demoCyan, 0, true);
 
     ShipState demoMagenta{};
     demoMagenta.x = Constants::ARENA_WIDTH_F * 0.78f + std::cos(-elapsed * 1.4f) * 35.0f;
@@ -820,11 +1106,10 @@ void Renderer::renderMenu(const std::string& ipInput, const std::string& statusM
     demoMagenta.angle = -elapsed * 1.4f - 1.5708f;
     demoMagenta.isThrusting = 1;
     demoMagenta.active = 1;
-    drawVectorShip(demoMagenta, 1);
+    drawVectorShip(demoMagenta, 1, true);
 
     EndTextureMode();
 
-    // 2. Composite scene through post-processing bloom/CRT shader & overlay crisp menu text
     const float screenW = static_cast<float>(GetScreenWidth());
     const float screenH = static_cast<float>(GetScreenHeight());
     const float scale   = std::min(screenW / Constants::ARENA_WIDTH_F, screenH / Constants::ARENA_HEIGHT_F);
@@ -857,43 +1142,54 @@ void Renderer::renderMenu(const std::string& ipInput, const std::string& statusM
     uiCamera.zoom = scale;
     BeginMode2D(uiCamera);
 
-    // Menu central panel
-    const float panelW = 740.0f;
-    const float panelH = 540.0f;
+    const float panelW = 800.0f;
+    const float panelH = 610.0f;
     const float panelX = (Constants::ARENA_WIDTH_F - panelW) * 0.5f;
     const float panelY = (Constants::ARENA_HEIGHT_F - panelH) * 0.5f;
 
-    DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.06f, 12, { 8, 10, 24, 225 });
+    DrawRectangleRounded({ panelX, panelY, panelW, panelH }, 0.06f, 12, { 8, 10, 24, 228 });
     DrawRectangleRoundedLinesEx({ panelX, panelY, panelW, panelH }, 0.06f, 12, 2.5f, NEON_CYAN);
 
     const int centerX = Constants::ARENA_WIDTH / 2;
 
     const char* title = "1V1 NEON SPACE ARENA";
     const int titleW = MeasureText(title, 44);
-    DrawText(title, centerX - titleW / 2, static_cast<int>(panelY + 28), 44, NEON_CYAN);
+    DrawText(title, centerX - titleW / 2, static_cast<int>(panelY + 26), 44, NEON_CYAN);
 
-    const char* subtitle = "C++17  |  RAYLIB GLSL 330 SHADERS  |  ENET UDP MULTIPLAYER";
+    const char* subtitle = "NOVAK AND ERIK PRODUCTIONS  |  PVP DUEL & 2P CO-OP WAVES";
     const int subW = MeasureText(subtitle, 16);
-    DrawText(subtitle, centerX - subW / 2, static_cast<int>(panelY + 80), 16, NEON_MAGENTA);
+    DrawText(subtitle, centerX - subW / 2, static_cast<int>(panelY + 76), 16, NEON_MAGENTA);
 
-    // Host Option [1]
     const float optX = panelX + 55.0f;
-    DrawText("[1]  HOST GAME  (UDP Port 7777 - Player 1 Cyan)",
-             static_cast<int>(optX), static_cast<int>(panelY + 130), 24, NEON_CYAN);
 
-    // Join Option [2] or [ENTER]
-    DrawText("[2] or [ENTER]  JOIN GAME  (Player 2 Magenta)",
-             static_cast<int>(optX), static_cast<int>(panelY + 172), 24, NEON_MAGENTA);
+    // Game Mode Selector Box
+    const bool isCoop = (selectedMode == GameMode::CoopWaves);
+    const Rectangle modeBox = { optX, panelY + 112.0f, panelW - 110.0f, 56.0f };
+    DrawRectangleRounded(modeBox, 0.18f, 8, { 14, 24, 52, 235 });
+    DrawRectangleRoundedLinesEx(modeBox, 0.18f, 8, 2.0f, isCoop ? ALLY_MINT : NEON_CYAN);
+
+    const std::string modeText = isCoop
+        ? "HOST MODE:  [ CO-OP WAVES - 2 PLAYERS VS ENEMY WAVES ]"
+        : "HOST MODE:  [ 1V1 PVP DUEL - HUMAN VS HUMAN ]";
+    DrawText(modeText.c_str(), static_cast<int>(optX + 18.0f), static_cast<int>(panelY + 120), 20, isCoop ? ALLY_MINT : NEON_CYAN);
+    DrawText("Press [M] or [UP/DOWN] to switch Game Mode",
+             static_cast<int>(optX + 18.0f), static_cast<int>(panelY + 145), 14, LIGHTGRAY);
+
+    // Host & Join Controls
+    DrawText("[1]  HOST GAME  (UDP Port 7777 - Launches Selected Mode)",
+             static_cast<int>(optX), static_cast<int>(panelY + 190), 23, NEON_CYAN);
+    DrawText("[2] or [ENTER]  JOIN FRIEND BY IP  (Auto-syncs Host Mode)",
+             static_cast<int>(optX), static_cast<int>(panelY + 230), 23, NEON_MAGENTA);
 
     // Host IP Input Box
     DrawText("TARGET HOST IP (Type IP, Backspace to edit):",
-             static_cast<int>(optX), static_cast<int>(panelY + 218), 17, LIGHTGRAY);
+             static_cast<int>(optX), static_cast<int>(panelY + 276), 17, LIGHTGRAY);
 
-    const Rectangle ipBox = { optX, panelY + 244.0f, panelW - 110.0f, 46.0f };
+    const Rectangle ipBox = { optX, panelY + 302.0f, panelW - 110.0f, 46.0f };
     DrawRectangleRec(ipBox, { 16, 22, 46, 255 });
     DrawRectangleLinesEx(ipBox, 2.0f, NEON_MAGENTA);
 
-    const bool cursorBlink = ( static_cast<int>(elapsed * 2.5f) % 2 ) == 0;
+    const bool cursorBlink = (static_cast<int>(elapsed * 2.5f) % 2) == 0;
     const std::string displayIp = ipInput + (cursorBlink ? "_" : "");
     DrawText(displayIp.c_str(),
              static_cast<int>(ipBox.x + 16.0f),
@@ -904,20 +1200,19 @@ void Renderer::renderMenu(const std::string& ipInput, const std::string& statusM
     // Display & Resolution Selector
     const std::string dispLabel = "DISPLAY:  " + getDisplaySettingsLabel();
     DrawText(dispLabel.c_str(),
-             static_cast<int>(optX), static_cast<int>(panelY + 312), 20, NEON_CYAN);
+             static_cast<int>(optX), static_cast<int>(panelY + 370), 20, NEON_CYAN);
     DrawText("[R] or [LEFT/RIGHT] Change Resolution   |   [F] or [F11] Toggle Fullscreen",
-             static_cast<int>(optX), static_cast<int>(panelY + 340), 16, LIGHTGRAY);
+             static_cast<int>(optX), static_cast<int>(panelY + 398), 16, LIGHTGRAY);
 
     // Controls Reference
     DrawText("CONTROLS:  [W/A/S/D] or [ARROW KEYS] Thrust & Rotate   |   [SPACE] Fire",
-             static_cast<int>(optX), static_cast<int>(panelY + 388), 16, { 180, 220, 255, 255 });
-    DrawText("ARENA:     1920x1080 Map   |   3 HP per Round   |   [F11] Fullscreen In-Game",
-             static_cast<int>(optX), static_cast<int>(panelY + 414), 16, { 180, 220, 255, 255 });
+             static_cast<int>(optX), static_cast<int>(panelY + 444), 16, { 180, 220, 255, 255 });
+    DrawText("CO-OP TIP: Shoot your friend twice to heal +1 HP! Shoot comets 3x to break them.",
+             static_cast<int>(optX), static_cast<int>(panelY + 470), 16, ALLY_MINT);
 
-    // Status message line
     const std::string statusLine = "STATUS: " + statusMessage;
     DrawText(statusLine.c_str(),
-             static_cast<int>(optX), static_cast<int>(panelY + 475), 17, YELLOW);
+             static_cast<int>(optX), static_cast<int>(panelY + 536), 17, YELLOW);
 
     EndMode2D();
     EndDrawing();
@@ -933,38 +1228,22 @@ void Renderer::renderGame(const GameState& state,
     updateShaderUniforms(elapsed);
     updateParticles(state, dt);
 
-    // -------------------------------------------------------------------------
-    // Pass 1: Render scene into offscreen RenderTexture2D (1920x1080 logical map)
-    // -------------------------------------------------------------------------
     BeginTextureMode(m_sceneTarget);
     ClearBackground(BLACK);
 
-    // 1a. Procedural starfield & nebula shader background
     drawBackgroundShader();
-
-    // 1b. Neon arena perimeter & markings
     drawArenaBorder();
-
-    // 1c. Engine thrust particles & comet trails
     drawParticles();
-
-    // 1d. Randomly flying comets & map power-ups
     drawComets(state);
     drawPowerUps(state);
-
-    // 1e. Projectiles
+    drawEnemies(state);
     drawBullets(state);
 
-    // 1f. Vector-style neon ships (Player 1 Cyan, Player 2 Magenta)
     drawVectorShip(state.ships[0], 0, isHost);
     drawVectorShip(state.ships[1], 1, !isHost);
 
     EndTextureMode();
 
-    // -------------------------------------------------------------------------
-    // Pass 2: Draw RenderTexture2D through GLSL 330 post-processing bloom/CRT
-    //         shader scaled to active resolution, then render crisp HUD overlay
-    // -------------------------------------------------------------------------
     const float screenW = static_cast<float>(GetScreenWidth());
     const float screenH = static_cast<float>(GetScreenHeight());
     const float scale   = std::min(screenW / Constants::ARENA_WIDTH_F, screenH / Constants::ARENA_HEIGHT_F);
@@ -975,7 +1254,6 @@ void Renderer::renderGame(const GameState& state,
     ClearBackground(BLACK);
 
     BeginShaderMode(m_postShader);
-    // Note: OpenGL render textures have inverted Y in texture coordinates
     const Rectangle srcRect = {
         0.0f,
         0.0f,

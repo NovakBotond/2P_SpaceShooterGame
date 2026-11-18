@@ -4,8 +4,9 @@
 // FILE:  src/graphics/Renderer.hpp
 // DESC:  Raylib OpenGL 3.3 renderer managing window lifecycle, GLSL 330 shaders
 //        (background.fs & postprocess.fs), RenderTexture2D post-processing,
-//        vector-style neon ships, projectiles, engine thrust particles,
-//        HUD health bars, and start menu UI.
+//        5-second studio intro screen, resolution/fullscreen customization,
+//        vector ships, blue bubble shield, comets, co-op enemies & bosses,
+//        13 power-ups, active above-ship buff badges, and HUD bars.
 // =============================================================================
 
 #include "shared/Constants.hpp"
@@ -22,7 +23,7 @@ struct ThrustParticle {
     float   life    = 0.0f;
     float   maxLife = 0.35f;
     float   size    = 3.0f;
-    uint8_t ownerId = 0; // 0 = Cyan (P1), 1 = Magenta (P2)
+    uint8_t ownerId = 0; // 0 = Cyan, 1 = Magenta, 2 = Comet, 3 = Overheat Smoke
 };
 
 class Renderer {
@@ -48,11 +49,13 @@ public:
     // Human-readable label of current display mode & resolution
     std::string getDisplaySettingsLabel() const;
 
-    // Render the interactive start menu (Host / Join by IP) through the shader pipeline
-    void renderMenu(const std::string& ipInput, const std::string& statusMessage);
+    // Render 5-second black intro screen with fade-in/fade-out studio title
+    void renderIntro(float elapsedSeconds);
 
-    // Render active 1v1 match state (background shader, particles, vector ships,
-    // bullets, post-processing bloom/scanline pass, and HUD health bars)
+    // Render the interactive start menu (Mode, Host / Join by IP, Display)
+    void renderMenu(const std::string& ipInput, GameMode selectedMode, const std::string& statusMessage);
+
+    // Render active match state (PvP Duel or Co-op Waves)
     void renderGame(const GameState& state,
                     bool isHost,
                     bool isConnected,
@@ -70,7 +73,9 @@ private:
     void drawParticles();
     void drawComets(const GameState& state);
     void drawPowerUps(const GameState& state);
+    void drawEnemies(const GameState& state);
     void drawVectorShip(const ShipState& ship, int playerId, bool isLocalViewer = true);
+    void drawShipPowerUpBadges(const ShipState& ship, int playerId, bool isLocalViewer);
     void drawBullets(const GameState& state);
     void drawHUD(const GameState& state, bool isHost, bool isConnected, const std::string& statusMessage, uint32_t pingMs);
 
