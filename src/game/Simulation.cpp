@@ -52,17 +52,21 @@ namespace {
         ship.y      = y;
         ship.angle  = angle;
         ship.hp     = Constants::SHIP_MAX_HP;
+        ship.maxHp  = Constants::SHIP_MAX_HP;
         ship.ammo   = 1.0f;
         ship.active = active ? 1 : 0;
     }
 
     void resetShipPowerUpsForRound(ShipState& ship, float x, float y, float angle) {
+        if (ship.maxHp < Constants::SHIP_MAX_HP) {
+            ship.maxHp = Constants::SHIP_MAX_HP;
+        }
         ship.x                   = x;
         ship.y                   = y;
         ship.vx                  = 0.0f;
         ship.vy                  = 0.0f;
         ship.angle               = angle;
-        ship.hp                  = Constants::SHIP_MAX_HP;
+        ship.hp                  = ship.maxHp;
         ship.ammo                = 1.0f;
         ship.overheatSmokeTimer  = 0.0f;
         ship.fireRateTimer       = 0.0f;
@@ -107,6 +111,11 @@ void Simulation::resetMatch(GameMode mode) {
 
     m_contactCooldowns[0] = 0.0f;
     m_contactCooldowns[1] = 0.0f;
+    for (int p = 0; p < Constants::MAX_PLAYERS; ++p) {
+        for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
+            m_ramCooldowns[p][e] = 0.0f;
+        }
+    }
 
     if (mode == GameMode::CoopWaves) {
         initShipForMatchStart(m_state.ships[0], Constants::ARENA_WIDTH_F * 0.35f, Constants::ARENA_HEIGHT_F * 0.50f, 0.0f, true);
@@ -160,6 +169,11 @@ void Simulation::resetRound() {
     m_fireCooldowns[1]    = 0.0f;
     m_contactCooldowns[0] = 0.0f;
     m_contactCooldowns[1] = 0.0f;
+    for (int p = 0; p < Constants::MAX_PLAYERS; ++p) {
+        for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
+            m_ramCooldowns[p][e] = 0.0f;
+        }
+    }
     m_cometSpawnTimer     = randomRange(Constants::COMET_MIN_SPAWN_INTERVAL, Constants::COMET_MAX_SPAWN_INTERVAL);
     m_powerUpSpawnTimer   = randomRange(Constants::POWERUP_MIN_SPAWN_INTERVAL, Constants::POWERUP_MAX_SPAWN_INTERVAL);
 }
@@ -490,6 +504,11 @@ void Simulation::update(float dt, const InputPacket& hostInput, const InputPacke
     for (int i = 0; i < Constants::MAX_PLAYERS; ++i) {
         if (m_contactCooldowns[i] > 0.0f) {
             m_contactCooldowns[i] = std::max(0.0f, m_contactCooldowns[i] - dt);
+        }
+        for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
+            if (m_ramCooldowns[i][e] > 0.0f) {
+                m_ramCooldowns[i][e] = std::max(0.0f, m_ramCooldowns[i][e] - dt);
+            }
         }
     }
 
@@ -1038,6 +1057,35 @@ void Simulation::updateEnemies(float dt) {
     }
 }
 
+void Simulation::defeatEnemySlot(int enemyIdx, int killerPlayerId) {
+    EnemyState& enemy = m_state.enemies[enemyIdx];
+    const bool wasBoss = (enemy.isBoss != 0);
+    enemy.active = 0;
+
+    if (wasBoss) {
+        m_state.bossActive = 0;
+    }
+    if (m_state.waveRemainingKills > 0) {
+        m_state.waveRemainingKills -= 1;
+    }
+
+    if (killerPlayerId >= 0 && killerPlayerId < Constants::MAX_PLAYERS) {
+        ShipState& killer = m_state.ships[killerPlayerId];
+        killer.kills += 1;
+        killer.score += wasBoss ? 5 : 1;
+
+        // Killing the Wave Boss grants +1 max HP to the killer
+        if (wasBoss) {
+            killer.maxHp += 1;
+        }
+
+        // Each enemy kill in Co-op grants +1 life (up to killer's maxHp)
+        if (killer.active && killer.hp < killer.maxHp) {
+            killer.hp = std::min(killer.maxHp, killer.hp + 1);
+        }
+    }
+}
+
 bool Simulation::applyDamageToShip(int targetId, float knockVx, float knockVy) {
     ShipState& targetShip = m_state.ships[targetId];
     if (!targetShip.active || targetShip.stealthTimer > 0.0f) {
@@ -1165,7 +1213,7 @@ void Simulation::resolveCollisions() {
                     ship.bouncyShotsLeft = Constants::POWERUP_BOUNCY_SHOTS;
                     break;
                 case PowerUpType::ExtraLife:
-                    if (ship.hp < Constants::SHIP_MAX_HP) {
+                    if (ship.hp < ship.maxHp) {
                         ship.hp += 1;
                     }
                     break;
@@ -1195,16 +1243,7 @@ void Simulation::resolveCollisions() {
                     }
                     if (!candidates.empty()) {
                         std::uniform_int_distribution<size_t> pick(0, candidates.size() - 1);
-                        const int idx = candidates[pick(m_rng)];
-                        EnemyState& victim = m_state.enemies[idx];
-                        victim.active = 0;
-                        if (victim.isBoss) {
-                            m_state.bossActive = 0;
-                        }
-                        if (m_state.waveRemainingKills > 0) {
-                            m_state.waveRemainingKills -= 1;
-                        }
-                        ship.score += victim.isBoss ? 5 : 1;
+                        defeatEnemySlot(candidates[pick(m_rng)], playerId);
                     }
                     break;
                 }
@@ -1256,12 +1295,18 @@ void Simulation::resolveCollisions() {
         }
     }
 
-    // 4. Comet-vs-Ship collision
+    // 4. Comet-vs-Ship & Comet-vs-Enemy collisions
     for (int c = 0; c < Constants::MAX_COMETS; ++c) {
         CometState& comet = m_state.comets[c];
         if (!comet.active) {
             continue;
         }
+
+        const float cSpeed = std::sqrt(comet.vx * comet.vx + comet.vy * comet.vy);
+        const float knockVx = (cSpeed > 0.001f) ? ((comet.vx / cSpeed) * Constants::COMET_HIT_KNOCKBACK) : 0.0f;
+        const float knockVy = (cSpeed > 0.001f) ? ((comet.vy / cSpeed) * Constants::COMET_HIT_KNOCKBACK) : 0.0f;
+
+        bool cometConsumed = false;
         for (int targetId = 0; targetId < Constants::MAX_PLAYERS; ++targetId) {
             ShipState& targetShip = m_state.ships[targetId];
             if (!targetShip.active || targetShip.stealthTimer > 0.0f) {
@@ -1270,14 +1315,7 @@ void Simulation::resolveCollisions() {
             if (checkCircleOverlap(comet.x, comet.y, comet.radius,
                                    targetShip.x, targetShip.y, Constants::SHIP_RADIUS)) {
                 comet.active = 0;
-
-                float knockVx = 0.0f;
-                float knockVy = 0.0f;
-                const float cSpeed = std::sqrt(comet.vx * comet.vx + comet.vy * comet.vy);
-                if (cSpeed > 0.001f) {
-                    knockVx = (comet.vx / cSpeed) * Constants::COMET_HIT_KNOCKBACK;
-                    knockVy = (comet.vy / cSpeed) * Constants::COMET_HIT_KNOCKBACK;
-                }
+                cometConsumed = true;
 
                 if (applyDamageToShip(targetId, knockVx, knockVy)) {
                     handlePlayerDefeat(targetId);
@@ -1288,9 +1326,35 @@ void Simulation::resolveCollisions() {
                 break;
             }
         }
+
+        if (cometConsumed) {
+            continue;
+        }
+
+        // Comets also damage enemies (same as players)
+        if (m_state.gameMode == static_cast<uint8_t>(GameMode::CoopWaves)) {
+            for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
+                EnemyState& enemy = m_state.enemies[e];
+                if (!enemy.active) {
+                    continue;
+                }
+                const float eRadius = enemy.isBoss ? Constants::ENEMY_BOSS_RADIUS : Constants::ENEMY_RADIUS;
+                if (checkCircleOverlap(comet.x, comet.y, comet.radius,
+                                       enemy.x, enemy.y, eRadius)) {
+                    comet.active = 0;
+                    enemy.vx += knockVx;
+                    enemy.vy += knockVy;
+                    enemy.hp -= 1;
+                    if (enemy.hp <= 0) {
+                        defeatEnemySlot(e, -1);
+                    }
+                    break;
+                }
+            }
+        }
     }
 
-    // 5. Enemy-vs-Player contact collision (Co-op)
+    // 5. Enemy-vs-Player contact collision & Blue Shield Ramming (Co-op)
     if (m_state.gameMode == static_cast<uint8_t>(GameMode::CoopWaves)) {
         for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
             EnemyState& enemy = m_state.enemies[e];
@@ -1301,21 +1365,43 @@ void Simulation::resolveCollisions() {
 
             for (int targetId = 0; targetId < Constants::MAX_PLAYERS; ++targetId) {
                 ShipState& ship = m_state.ships[targetId];
-                if (!ship.active || ship.stealthTimer > 0.0f || m_contactCooldowns[targetId] > 0.0f) {
+                if (!ship.active || ship.stealthTimer > 0.0f) {
                     continue;
                 }
-                if (checkCircleOverlap(enemy.x, enemy.y, eRadius,
-                                       ship.x, ship.y, Constants::SHIP_RADIUS)) {
-                    float dx = ship.x - enemy.x;
-                    float dy = ship.y - enemy.y;
-                    float dist = std::sqrt(dx * dx + dy * dy);
-                    if (dist < 0.001f) {
-                        dx = 1.0f;
-                        dy = 0.0f;
-                        dist = 1.0f;
+
+                const bool hasShield = (ship.shieldHp > 0);
+                const float shipColR = hasShield ? (Constants::SHIP_RADIUS + 10.0f) : Constants::SHIP_RADIUS;
+
+                if (!checkCircleOverlap(enemy.x, enemy.y, eRadius, ship.x, ship.y, shipColR)) {
+                    continue;
+                }
+
+                float dx = ship.x - enemy.x;
+                float dy = ship.y - enemy.y;
+                float dist = std::sqrt(dx * dx + dy * dy);
+                if (dist < 0.001f) {
+                    dx = 1.0f;
+                    dy = 0.0f;
+                    dist = 1.0f;
+                }
+                const float nx = dx / dist;
+                const float ny = dy / dist;
+
+                if (hasShield) {
+                    // Shielded player can ram enemies without taking damage (1 hit = -1hp)
+                    if (m_ramCooldowns[targetId][e] <= 0.0f) {
+                        m_ramCooldowns[targetId][e] = 0.35f;
+                        enemy.vx -= nx * 280.0f;
+                        enemy.vy -= ny * 280.0f;
+                        enemy.hp -= 1;
+                        if (enemy.hp <= 0) {
+                            defeatEnemySlot(e, targetId);
+                        }
                     }
-                    const float nx = dx / dist;
-                    const float ny = dy / dist;
+                    break;
+                }
+
+                if (m_contactCooldowns[targetId] <= 0.0f) {
                     enemy.vx -= nx * 160.0f;
                     enemy.vy -= ny * 160.0f;
                     m_contactCooldowns[targetId] = 0.75f;
@@ -1351,16 +1437,10 @@ void Simulation::resolveCollisions() {
                     bullet.active = 0;
                     enemy.hp -= 1;
                     if (enemy.hp <= 0) {
-                        enemy.active = 0;
-                        if (enemy.isBoss) {
-                            m_state.bossActive = 0;
-                        }
-                        if (m_state.waveRemainingKills > 0) {
-                            m_state.waveRemainingKills -= 1;
-                        }
-                        if (bullet.ownerId < Constants::MAX_PLAYERS) {
-                            m_state.ships[bullet.ownerId].score += enemy.isBoss ? 5 : 1;
-                        }
+                        const int killerId = (bullet.ownerId < Constants::MAX_PLAYERS)
+                            ? static_cast<int>(bullet.ownerId)
+                            : -1;
+                        defeatEnemySlot(e, killerId);
                     }
                     hitEnemy = true;
                     break;
@@ -1377,7 +1457,6 @@ void Simulation::resolveCollisions() {
         }
 
         for (int targetId = 0; targetId < Constants::MAX_PLAYERS; ++targetId) {
-            // Do not hit yourself
             if (bullet.ownerId == static_cast<uint8_t>(targetId)) {
                 continue;
             }
@@ -1398,7 +1477,7 @@ void Simulation::resolveCollisions() {
                     targetShip.allyHealHits += 1;
                     if (targetShip.allyHealHits >= Constants::ALLY_HEAL_SHOTS_REQUIRED) {
                         targetShip.allyHealHits = 0;
-                        if (targetShip.hp < Constants::SHIP_MAX_HP) {
+                        if (targetShip.hp < targetShip.maxHp) {
                             targetShip.hp += 1;
                         }
                     }

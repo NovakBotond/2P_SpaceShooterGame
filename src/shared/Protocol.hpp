@@ -63,7 +63,9 @@ struct ShipState {
     float   vy                  = 0.0f;
     float   angle               = 0.0f; // Facing angle in radians
     int32_t hp                  = Constants::SHIP_MAX_HP;
+    int32_t maxHp               = Constants::SHIP_MAX_HP;
     int32_t score               = 0;
+    int32_t kills               = 0;    // Co-op enemy kills counter
     float   ammo                = 1.0f; // 1.0 = full (4s fire), 0.0 = empty
     float   overheatSmokeTimer  = 0.0f; // > 0: front cannon smokes for 2s & jammed
     float   fireRateTimer       = 0.0f; // > 0: +30% fire rate

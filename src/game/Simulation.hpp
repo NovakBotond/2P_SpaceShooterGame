@@ -60,6 +60,7 @@ private:
     void updatePowerUps(float dt);
     void spawnEnemy(bool asBoss);
     void updateEnemies(float dt);
+    void defeatEnemySlot(int enemyIdx, int killerPlayerId);
     bool applyDamageToShip(int targetId, float knockVx, float knockVy);
     void handlePlayerDefeat(int defeatedPlayerId);
     void resolveCollisions();
@@ -67,6 +68,7 @@ private:
     GameState    m_state{};
     float        m_fireCooldowns[Constants::MAX_PLAYERS]{ 0.0f, 0.0f };
     float        m_contactCooldowns[Constants::MAX_PLAYERS]{ 0.0f, 0.0f };
+    float        m_ramCooldowns[Constants::MAX_PLAYERS][Constants::MAX_ENEMIES]{};
     float        m_enemyFireCooldowns[Constants::MAX_ENEMIES]{};
     float        m_cometSpawnTimer   = 2.5f;
     float        m_powerUpSpawnTimer = 3.0f;
