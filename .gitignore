@@ -1,0 +1,17 @@
+# CMake & Build Artifacts
+build/
+cmake-build-*/
+out/
+
+# Executables & Object Files
+*.exe
+*.obj
+*.o
+*.a
+*.lib
+*.pdb
+
+# IDE Settings
+.vs/
+.vscode/
+.idea/
