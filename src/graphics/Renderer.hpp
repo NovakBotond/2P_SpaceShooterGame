@@ -69,7 +69,8 @@ private:
     void drawArenaBorder();
     void drawParticles();
     void drawComets(const GameState& state);
-    void drawVectorShip(const ShipState& ship, int playerId);
+    void drawPowerUps(const GameState& state);
+    void drawVectorShip(const ShipState& ship, int playerId, bool isLocalViewer = true);
     void drawBullets(const GameState& state);
     void drawHUD(const GameState& state, bool isHost, bool isConnected, const std::string& statusMessage, uint32_t pingMs);
 

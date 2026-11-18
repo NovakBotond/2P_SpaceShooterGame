@@ -214,10 +214,10 @@ void Renderer::updateShaderUniforms(float elapsedTime) {
 }
 
 void Renderer::updateParticles(const GameState& state, float dt) {
-    // Spawn thrust particles behind active thrusting ships
+    // Spawn thrust particles behind active thrusting ships (suppressed while invisible)
     for (int i = 0; i < Constants::MAX_PLAYERS; ++i) {
         const ShipState& ship = state.ships[i];
-        if (!ship.active || !ship.isThrusting) {
+        if (!ship.active || !ship.isThrusting || ship.stealthTimer > 0.0f) {
             continue;
         }
 
@@ -371,14 +371,92 @@ void Renderer::drawComets(const GameState& state) {
     }
 }
 
-void Renderer::drawVectorShip(const ShipState& ship, int playerId) {
+void Renderer::drawPowerUps(const GameState& state) {
+    const float elapsed = static_cast<float>(GetTime());
+
+    for (int i = 0; i < Constants::MAX_MAP_POWERUPS; ++i) {
+        const PowerUpState& pu = state.powerUps[i];
+        if (!pu.active) {
+            continue;
+        }
+
+        Color puColor = WHITE;
+        const char* label = "PWR";
+
+        switch (static_cast<PowerUpType>(pu.type)) {
+            case PowerUpType::FireRateBoost:
+                puColor = { 255, 215,  40, 255 }; // Gold
+                label   = "FR+";
+                break;
+            case PowerUpType::SpeedBoost:
+                puColor = {  50, 255, 130, 255 }; // Neon Green
+                label   = "SPD";
+                break;
+            case PowerUpType::Shotgun:
+                puColor = { 255, 120,  35, 255 }; // Neon Orange
+                label   = "SGN";
+                break;
+            case PowerUpType::StealthImmortal:
+                puColor = { 175, 130, 255, 255 }; // Electric Violet
+                label   = "INV";
+                break;
+            case PowerUpType::BouncyBullets:
+                puColor = {  80, 255, 230, 255 }; // Aqua Lime
+                label   = "BNC";
+                break;
+            case PowerUpType::ExtraLife:
+                puColor = { 255,  75, 110, 255 }; // Crimson Pink
+                label   = "+HP";
+                break;
+            default:
+                break;
+        }
+
+        const Vector2 center = { pu.x, pu.y };
+        const float pulse = 1.0f + 0.12f * std::sin(elapsed * 6.0f + i * 2.0f);
+        const float r = Constants::POWERUP_RADIUS * pulse;
+        const float lifeRatio = std::clamp(pu.lifetime / Constants::POWERUP_MAP_LIFETIME, 0.0f, 1.0f);
+
+        Color glowCol = puColor;
+        glowCol.a = 80;
+        DrawCircleV(center, r * 1.35f, glowCol);
+
+        // Rotating neon diamond frame
+        DrawPolyLinesEx(center, 4, r, elapsed * 90.0f, 2.8f, puColor);
+        DrawCircleLinesV(center, r * 0.78f, WHITE);
+
+        // 6-second decay progress ring
+        DrawRing(center, r + 5.0f, r + 7.5f, -90.0f, -90.0f + 360.0f * lifeRatio, 28, puColor);
+
+        const int fontSize = 14;
+        const int textW = MeasureText(label, fontSize);
+        DrawText(label, static_cast<int>(pu.x) - textW / 2, static_cast<int>(pu.y) - fontSize / 2, fontSize, WHITE);
+    }
+}
+
+void Renderer::drawVectorShip(const ShipState& ship, int playerId, bool isLocalViewer) {
     if (!ship.active) {
         return;
     }
 
-    const Color mainColor = (playerId == 0) ? NEON_CYAN      : NEON_MAGENTA;
-    const Color glowColor = (playerId == 0) ? NEON_CYAN_GLOW : NEON_MAG_GLOW;
-    const Color coreColor = (playerId == 0) ? NEON_CYAN_CORE : NEON_MAG_CORE;
+    // Power-up #4: Invisible & Immortal for 6 seconds
+    const bool isStealthed = (ship.stealthTimer > 0.0f);
+    if (isStealthed && !isLocalViewer) {
+        return; // Completely invisible to the opposing player
+    }
+
+    Color mainColor = (playerId == 0) ? NEON_CYAN      : NEON_MAGENTA;
+    Color glowColor = (playerId == 0) ? NEON_CYAN_GLOW : NEON_MAG_GLOW;
+    Color coreColor = (playerId == 0) ? NEON_CYAN_CORE : NEON_MAG_CORE;
+
+    if (isStealthed) {
+        // Local player sees a translucent cloaked ghost outline of their own ship
+        mainColor.a = 75;
+        glowColor.a = 35;
+        coreColor.a = 90;
+        DrawRing({ ship.x, ship.y }, Constants::SHIP_RADIUS + 6.0f, Constants::SHIP_RADIUS + 8.0f,
+                 0.0f, 360.0f, 28, { 175, 130, 255, 110 });
+    }
 
     const float c = std::cos(ship.angle);
     const float s = std::sin(ship.angle);
@@ -447,6 +525,11 @@ void Renderer::drawBullets(const GameState& state) {
         DrawLineEx(tail, head, Constants::BULLET_RADIUS * 1.1f, mainColor);
         DrawCircleV(head, Constants::BULLET_RADIUS * 1.3f, mainColor);
         DrawCircleV(head, Constants::BULLET_RADIUS * 0.65f, WHITE);
+
+        if (b.bouncesOnWalls) {
+            DrawRing(head, Constants::BULLET_RADIUS * 1.4f, Constants::BULLET_RADIUS * 1.85f,
+                     0.0f, 360.0f, 12, { 80, 255, 230, 220 });
+        }
     }
 }
 
@@ -503,6 +586,38 @@ void Renderer::drawHUD(const GameState& state,
             DrawRectangleRec(seg, { 55, 20, 45, 140 });
             DrawRectangleLinesEx(seg, 1.5f, { 180, 0, 130, 120 });
         }
+    }
+
+    // Active Power-Up Status Lists under P1 and P2 Health Bars
+    auto formatActivePowerUps = [](const ShipState& s) -> std::string {
+        std::string list;
+        if (s.fireRateTimer > 0.0f) {
+            list += "[FR+ " + std::to_string(static_cast<int>(std::ceil(s.fireRateTimer))) + "s] ";
+        }
+        if (s.speedBoostTimer > 0.0f) {
+            list += "[SPD+ " + std::to_string(static_cast<int>(std::ceil(s.speedBoostTimer))) + "s] ";
+        }
+        if (s.stealthTimer > 0.0f) {
+            list += "[STEALTH " + std::to_string(static_cast<int>(std::ceil(s.stealthTimer))) + "s] ";
+        }
+        if (s.shotgunShotsLeft > 0) {
+            list += "[SHOTGUN x" + std::to_string(s.shotgunShotsLeft) + "] ";
+        }
+        if (s.bouncyShotsLeft > 0) {
+            list += "[BOUNCE x" + std::to_string(s.bouncyShotsLeft) + "] ";
+        }
+        return list;
+    };
+
+    const std::string p1Buffs = formatActivePowerUps(p1);
+    if (!p1Buffs.empty()) {
+        DrawText(p1Buffs.c_str(), p1X, hudY + 48, 15, { 120, 255, 190, 240 });
+    }
+
+    const std::string p2Buffs = formatActivePowerUps(p2);
+    if (!p2Buffs.empty()) {
+        const int p2BuffW = MeasureText(p2Buffs.c_str(), 15);
+        DrawText(p2Buffs.c_str(), p2RightEdge - p2BuffW, hudY + 48, 15, { 255, 160, 235, 240 });
     }
 
     // -------------------------------------------------------------------------
@@ -713,15 +828,16 @@ void Renderer::renderGame(const GameState& state,
     // 1c. Engine thrust particles & comet trails
     drawParticles();
 
-    // 1d. Randomly flying comets
+    // 1d. Randomly flying comets & map power-ups
     drawComets(state);
+    drawPowerUps(state);
 
     // 1e. Projectiles
     drawBullets(state);
 
-    // 1e. Vector-style neon ships (Player 1 Cyan, Player 2 Magenta)
-    drawVectorShip(state.ships[0], 0);
-    drawVectorShip(state.ships[1], 1);
+    // 1f. Vector-style neon ships (Player 1 Cyan, Player 2 Magenta)
+    drawVectorShip(state.ships[0], 0, isHost);
+    drawVectorShip(state.ships[1], 1, !isHost);
 
     EndTextureMode();
 

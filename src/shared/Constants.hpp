@@ -45,12 +45,31 @@ namespace Constants {
     // -------------------------------------------------------------------------
     // Projectile (Bullet) Physics
     // -------------------------------------------------------------------------
-    constexpr int   MAX_BULLETS          = 32;
-    constexpr float BULLET_SPEED         = 650.0f; // Projectile speed (px/sec)
-    constexpr float BULLET_RADIUS        = 5.0f;   // Circle collider radius (px)
-    constexpr float BULLET_LIFETIME      = 1.75f;  // Time before despawn (sec)
-    constexpr float SHIP_FIRE_COOLDOWN   = 0.24f;  // Minimum delay between shots (sec)
-    constexpr float BULLET_HIT_KNOCKBACK = 95.0f;  // Impulse transferred on hit
+    constexpr int   MAX_BULLETS            = 64;
+    constexpr float BULLET_SPEED           = 650.0f; // Projectile speed (px/sec)
+    constexpr float BULLET_RADIUS          = 5.0f;   // Circle collider radius (px)
+    constexpr float BULLET_LIFETIME        = 1.75f;  // Standard despawn time (sec)
+    constexpr float BOUNCY_BULLET_LIFETIME = 5.0f;   // Wall-bouncing bullet decay (sec)
+    constexpr float SHIP_FIRE_COOLDOWN     = 0.24f;  // Base delay between shots (sec)
+    constexpr float BULLET_HIT_KNOCKBACK   = 95.0f;  // Impulse transferred on hit
+    constexpr float SHOTGUN_SPREAD_ANGLE   = 0.18f;  // Radians between shotgun pellets
+
+    // -------------------------------------------------------------------------
+    // Power-Ups (Max 2 on map at once, despawn after 6 seconds)
+    // -------------------------------------------------------------------------
+    constexpr int   MAX_MAP_POWERUPS           = 2;     // Max simultaneous map pickups
+    constexpr float POWERUP_MAP_LIFETIME       = 6.0f;  // Stays on map for 6 seconds
+    constexpr float POWERUP_MIN_SPAWN_INTERVAL = 3.5f;  // Min seconds between spawns
+    constexpr float POWERUP_MAX_SPAWN_INTERVAL = 6.5f;  // Max seconds between spawns
+    constexpr float POWERUP_RADIUS             = 20.0f; // Pickup collider radius (px)
+
+    constexpr float   POWERUP_FIRERATE_DURATION = 10.0f; // +30% fire rate for 10s
+    constexpr float   POWERUP_FIRERATE_MULT     = 1.30f;
+    constexpr float   POWERUP_SPEED_DURATION    = 10.0f; // +30% ship speed for 10s
+    constexpr float   POWERUP_SPEED_MULT        = 1.30f;
+    constexpr uint8_t POWERUP_SHOTGUN_SHOTS     = 3;     // Next 3 shots fire 3 bullets
+    constexpr float   POWERUP_STEALTH_DURATION  = 6.0f;  // Invisible & immortal 6s (no fire)
+    constexpr uint8_t POWERUP_BOUNCY_SHOTS      = 6;     // Next 6 shots bounce off walls (5s)
 
     // -------------------------------------------------------------------------
     // Round Feedback

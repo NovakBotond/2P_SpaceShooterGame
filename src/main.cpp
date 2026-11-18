@@ -113,18 +113,28 @@ namespace {
                 prevPredictedShip = reconciled;
             } else if (distSq > 0.25f) {
                 // Smoothly blend small physics discrepancies (collisions / knockback)
-                predictedShip.x     += dx * 0.30f;
-                predictedShip.y     += dy * 0.30f;
-                predictedShip.vx    += (reconciled.vx - predictedShip.vx) * 0.35f;
-                predictedShip.vy    += (reconciled.vy - predictedShip.vy) * 0.35f;
-                predictedShip.angle += Simulation::shortestAngleDiff(predictedShip.angle, reconciled.angle) * 0.35f;
-                predictedShip.hp     = reconciled.hp;
-                predictedShip.score  = reconciled.score;
-                predictedShip.active = reconciled.active;
+                predictedShip.x                += dx * 0.30f;
+                predictedShip.y                += dy * 0.30f;
+                predictedShip.vx               += (reconciled.vx - predictedShip.vx) * 0.35f;
+                predictedShip.vy               += (reconciled.vy - predictedShip.vy) * 0.35f;
+                predictedShip.angle            += Simulation::shortestAngleDiff(predictedShip.angle, reconciled.angle) * 0.35f;
+                predictedShip.hp                = reconciled.hp;
+                predictedShip.score             = reconciled.score;
+                predictedShip.fireRateTimer     = reconciled.fireRateTimer;
+                predictedShip.speedBoostTimer   = reconciled.speedBoostTimer;
+                predictedShip.stealthTimer      = reconciled.stealthTimer;
+                predictedShip.shotgunShotsLeft  = reconciled.shotgunShotsLeft;
+                predictedShip.bouncyShotsLeft   = reconciled.bouncyShotsLeft;
+                predictedShip.active            = reconciled.active;
             } else {
-                predictedShip.hp     = reconciled.hp;
-                predictedShip.score  = reconciled.score;
-                predictedShip.active = reconciled.active;
+                predictedShip.hp                = reconciled.hp;
+                predictedShip.score             = reconciled.score;
+                predictedShip.fireRateTimer     = reconciled.fireRateTimer;
+                predictedShip.speedBoostTimer   = reconciled.speedBoostTimer;
+                predictedShip.stealthTimer      = reconciled.stealthTimer;
+                predictedShip.shotgunShotsLeft  = reconciled.shotgunShotsLeft;
+                predictedShip.bouncyShotsLeft   = reconciled.bouncyShotsLeft;
+                predictedShip.active            = reconciled.active;
             }
 
             // Update remote Host ship & bullets with smooth positional blending

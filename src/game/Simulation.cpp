@@ -74,25 +74,35 @@ void Simulation::resetMatch() {
 void Simulation::resetRound() {
     // Player 0 (Host - Electric Cyan): Spawn on left side facing right
     ShipState& p0 = m_state.ships[0];
-    p0.x           = Constants::ARENA_WIDTH_F * 0.20f;
-    p0.y           = Constants::ARENA_HEIGHT_F * 0.50f;
-    p0.vx          = 0.0f;
-    p0.vy          = 0.0f;
-    p0.angle       = 0.0f;
-    p0.hp          = Constants::SHIP_MAX_HP;
-    p0.isThrusting = 0;
-    p0.active      = 1;
+    p0.x                = Constants::ARENA_WIDTH_F * 0.20f;
+    p0.y                = Constants::ARENA_HEIGHT_F * 0.50f;
+    p0.vx               = 0.0f;
+    p0.vy               = 0.0f;
+    p0.angle            = 0.0f;
+    p0.hp               = Constants::SHIP_MAX_HP;
+    p0.fireRateTimer    = 0.0f;
+    p0.speedBoostTimer  = 0.0f;
+    p0.stealthTimer     = 0.0f;
+    p0.shotgunShotsLeft = 0;
+    p0.bouncyShotsLeft  = 0;
+    p0.isThrusting      = 0;
+    p0.active           = 1;
 
     // Player 1 (Client - Neon Magenta): Spawn on right side facing left
     ShipState& p1 = m_state.ships[1];
-    p1.x           = Constants::ARENA_WIDTH_F * 0.80f;
-    p1.y           = Constants::ARENA_HEIGHT_F * 0.50f;
-    p1.vx          = 0.0f;
-    p1.vy          = 0.0f;
-    p1.angle       = PI_VAL;
-    p1.hp          = Constants::SHIP_MAX_HP;
-    p1.isThrusting = 0;
-    p1.active      = 1;
+    p1.x                = Constants::ARENA_WIDTH_F * 0.80f;
+    p1.y                = Constants::ARENA_HEIGHT_F * 0.50f;
+    p1.vx               = 0.0f;
+    p1.vy               = 0.0f;
+    p1.angle            = PI_VAL;
+    p1.hp               = Constants::SHIP_MAX_HP;
+    p1.fireRateTimer    = 0.0f;
+    p1.speedBoostTimer  = 0.0f;
+    p1.stealthTimer     = 0.0f;
+    p1.shotgunShotsLeft = 0;
+    p1.bouncyShotsLeft  = 0;
+    p1.isThrusting      = 0;
+    p1.active           = 1;
 
     // Clear all active projectiles
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
@@ -106,9 +116,16 @@ void Simulation::resetRound() {
         m_state.comets[i].active = 0;
     }
 
-    m_fireCooldowns[0] = 0.0f;
-    m_fireCooldowns[1] = 0.0f;
-    m_cometSpawnTimer  = randomRange(Constants::COMET_MIN_SPAWN_INTERVAL, Constants::COMET_MAX_SPAWN_INTERVAL);
+    // Clear all map power-ups on round reset
+    for (int i = 0; i < Constants::MAX_MAP_POWERUPS; ++i) {
+        m_state.powerUps[i] = PowerUpState{};
+        m_state.powerUps[i].active = 0;
+    }
+
+    m_fireCooldowns[0]  = 0.0f;
+    m_fireCooldowns[1]  = 0.0f;
+    m_cometSpawnTimer   = randomRange(Constants::COMET_MIN_SPAWN_INTERVAL, Constants::COMET_MAX_SPAWN_INTERVAL);
+    m_powerUpSpawnTimer = randomRange(Constants::POWERUP_MIN_SPAWN_INTERVAL, Constants::POWERUP_MAX_SPAWN_INTERVAL);
 }
 
 float Simulation::shortestAngleDiff(float from, float to) {
@@ -174,6 +191,18 @@ void Simulation::stepShipPhysics(ShipState& ship, const InputPacket& input, floa
         return;
     }
 
+    if (ship.fireRateTimer > 0.0f) {
+        ship.fireRateTimer = std::max(0.0f, ship.fireRateTimer - dt);
+    }
+    if (ship.speedBoostTimer > 0.0f) {
+        ship.speedBoostTimer = std::max(0.0f, ship.speedBoostTimer - dt);
+    }
+    if (ship.stealthTimer > 0.0f) {
+        ship.stealthTimer = std::max(0.0f, ship.stealthTimer - dt);
+    }
+
+    const float speedMult = (ship.speedBoostTimer > 0.0f) ? Constants::POWERUP_SPEED_MULT : 1.0f;
+
     // Rotation (A/D or Left/Right Arrow)
     if (input.rotateLeft) {
         ship.angle -= Constants::SHIP_ROTATION_SPEED * dt;
@@ -194,13 +223,13 @@ void Simulation::stepShipPhysics(ShipState& ship, const InputPacket& input, floa
     // Thrust (W/S or Up/Down Arrow)
     ship.isThrusting = 0;
     if (input.thrustForward) {
-        ship.vx += dirX * Constants::SHIP_THRUST_ACCEL * dt;
-        ship.vy += dirY * Constants::SHIP_THRUST_ACCEL * dt;
+        ship.vx += dirX * (Constants::SHIP_THRUST_ACCEL * speedMult) * dt;
+        ship.vy += dirY * (Constants::SHIP_THRUST_ACCEL * speedMult) * dt;
         ship.isThrusting = 1;
     }
     if (input.thrustBackward) {
-        ship.vx -= dirX * Constants::SHIP_REVERSE_ACCEL * dt;
-        ship.vy -= dirY * Constants::SHIP_REVERSE_ACCEL * dt;
+        ship.vx -= dirX * (Constants::SHIP_REVERSE_ACCEL * speedMult) * dt;
+        ship.vy -= dirY * (Constants::SHIP_REVERSE_ACCEL * speedMult) * dt;
     }
 
     // Apply space drag damping
@@ -208,11 +237,12 @@ void Simulation::stepShipPhysics(ShipState& ship, const InputPacket& input, floa
     ship.vx *= dragFactor;
     ship.vy *= dragFactor;
 
-    // Clamp maximum speed
+    // Clamp maximum speed (boosted by +30% when SpeedBoost power-up is active)
+    const float maxSpeed = Constants::SHIP_SPEED * speedMult;
     const float speedSq = ship.vx * ship.vx + ship.vy * ship.vy;
-    const float maxSpeedSq = Constants::SHIP_SPEED * Constants::SHIP_SPEED;
+    const float maxSpeedSq = maxSpeed * maxSpeed;
     if (speedSq > maxSpeedSq) {
-        const float invSpeed = Constants::SHIP_SPEED / std::sqrt(speedSq);
+        const float invSpeed = maxSpeed / std::sqrt(speedSq);
         ship.vx *= invSpeed;
         ship.vy *= invSpeed;
     }
@@ -255,8 +285,40 @@ void Simulation::extrapolateVisuals(GameState& state,
             b.x += b.vx * dt;
             b.y += b.vy * dt;
             b.lifetime -= dt;
-            if (b.lifetime <= 0.0f || b.x < minX || b.x > maxX || b.y < minY || b.y > maxY) {
+
+            if (b.lifetime <= 0.0f) {
                 b.active = 0;
+                continue;
+            }
+
+            if (b.bouncesOnWalls) {
+                if (b.x - Constants::BULLET_RADIUS < minX) {
+                    b.x = minX + Constants::BULLET_RADIUS;
+                    b.vx = std::abs(b.vx);
+                } else if (b.x + Constants::BULLET_RADIUS > maxX) {
+                    b.x = maxX - Constants::BULLET_RADIUS;
+                    b.vx = -std::abs(b.vx);
+                }
+                if (b.y - Constants::BULLET_RADIUS < minY) {
+                    b.y = minY + Constants::BULLET_RADIUS;
+                    b.vy = std::abs(b.vy);
+                } else if (b.y + Constants::BULLET_RADIUS > maxY) {
+                    b.y = maxY - Constants::BULLET_RADIUS;
+                    b.vy = -std::abs(b.vy);
+                }
+            } else if (b.x < minX || b.x > maxX || b.y < minY || b.y > maxY) {
+                b.active = 0;
+            }
+        }
+
+        for (int i = 0; i < Constants::MAX_MAP_POWERUPS; ++i) {
+            PowerUpState& pu = state.powerUps[i];
+            if (!pu.active) {
+                continue;
+            }
+            pu.lifetime -= dt;
+            if (pu.lifetime <= 0.0f) {
+                pu.active = 0;
             }
         }
 
@@ -295,7 +357,10 @@ void Simulation::update(float dt, const InputPacket& hostInput, const InputPacke
     // 3. Spawn & advance random flying comets
     updateComets(dt);
 
-    // 4. Perform circle-based collision detection & round-end evaluation
+    // 4. Spawn & advance random map power-ups (max 2, 6s lifetime)
+    updatePowerUps(dt);
+
+    // 5. Perform circle-based collision detection & round-end evaluation
     resolveCollisions();
 }
 
@@ -315,28 +380,46 @@ void Simulation::updateShip(int playerId, const InputPacket& input, float dt) {
 
     stepShipPhysics(ship, input, dt);
 
-    // Weapon firing (Spacebar)
-    if (input.shoot && m_fireCooldowns[playerId] <= 0.0f) {
-        spawnBullet(playerId, ship);
-        m_fireCooldowns[playerId] = Constants::SHIP_FIRE_COOLDOWN;
+    // Weapon firing (Spacebar) — blocked while Stealth/Immortal power-up (#4) is active
+    if (input.shoot && m_fireCooldowns[playerId] <= 0.0f && ship.stealthTimer <= 0.0f) {
+        const bool isBouncy = (ship.bouncyShotsLeft > 0);
+        if (isBouncy) {
+            ship.bouncyShotsLeft -= 1;
+        }
+
+        if (ship.shotgunShotsLeft > 0) {
+            ship.shotgunShotsLeft -= 1;
+            spawnBullet(playerId, ship, -Constants::SHOTGUN_SPREAD_ANGLE, isBouncy);
+            spawnBullet(playerId, ship,  0.0f,                            isBouncy);
+            spawnBullet(playerId, ship,  Constants::SHOTGUN_SPREAD_ANGLE, isBouncy);
+        } else {
+            spawnBullet(playerId, ship, 0.0f, isBouncy);
+        }
+
+        const float baseCooldown = Constants::SHIP_FIRE_COOLDOWN;
+        m_fireCooldowns[playerId] = (ship.fireRateTimer > 0.0f)
+            ? (baseCooldown / Constants::POWERUP_FIRERATE_MULT)
+            : baseCooldown;
     }
 }
 
-void Simulation::spawnBullet(int playerId, const ShipState& ship) {
+void Simulation::spawnBullet(int playerId, const ShipState& ship, float angleOffset, bool bouncy) {
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         BulletState& bullet = m_state.bullets[i];
         if (!bullet.active) {
-            const float dirX = std::cos(ship.angle);
-            const float dirY = std::sin(ship.angle);
+            const float fireAngle = ship.angle + angleOffset;
+            const float dirX = std::cos(fireAngle);
+            const float dirY = std::sin(fireAngle);
             const float spawnDist = Constants::SHIP_RADIUS + Constants::BULLET_RADIUS + 4.0f;
 
-            bullet.x        = ship.x + dirX * spawnDist;
-            bullet.y        = ship.y + dirY * spawnDist;
-            bullet.vx       = dirX * Constants::BULLET_SPEED + ship.vx * 0.25f;
-            bullet.vy       = dirY * Constants::BULLET_SPEED + ship.vy * 0.25f;
-            bullet.lifetime = Constants::BULLET_LIFETIME;
-            bullet.ownerId  = static_cast<uint8_t>(playerId);
-            bullet.active   = 1;
+            bullet.x              = ship.x + dirX * spawnDist;
+            bullet.y              = ship.y + dirY * spawnDist;
+            bullet.vx             = dirX * Constants::BULLET_SPEED + ship.vx * 0.25f;
+            bullet.vy             = dirY * Constants::BULLET_SPEED + ship.vy * 0.25f;
+            bullet.lifetime       = bouncy ? Constants::BOUNCY_BULLET_LIFETIME : Constants::BULLET_LIFETIME;
+            bullet.ownerId        = static_cast<uint8_t>(playerId);
+            bullet.bouncesOnWalls = bouncy ? 1 : 0;
+            bullet.active         = 1;
             return;
         }
     }
@@ -358,10 +441,30 @@ void Simulation::updateBullets(float dt) {
         bullet.y += bullet.vy * dt;
         bullet.lifetime -= dt;
 
-        // Deactivate expired or out-of-bounds projectiles
-        if (bullet.lifetime <= 0.0f ||
-            bullet.x < minX || bullet.x > maxX ||
-            bullet.y < minY || bullet.y > maxY) {
+        if (bullet.lifetime <= 0.0f) {
+            bullet.active = 0;
+            continue;
+        }
+
+        if (bullet.bouncesOnWalls) {
+            // Power-up #5: Bounce off arena perimeter walls until 5s decay
+            if (bullet.x - Constants::BULLET_RADIUS < minX) {
+                bullet.x = minX + Constants::BULLET_RADIUS;
+                bullet.vx = std::abs(bullet.vx);
+            } else if (bullet.x + Constants::BULLET_RADIUS > maxX) {
+                bullet.x = maxX - Constants::BULLET_RADIUS;
+                bullet.vx = -std::abs(bullet.vx);
+            }
+
+            if (bullet.y - Constants::BULLET_RADIUS < minY) {
+                bullet.y = minY + Constants::BULLET_RADIUS;
+                bullet.vy = std::abs(bullet.vy);
+            } else if (bullet.y + Constants::BULLET_RADIUS > maxY) {
+                bullet.y = maxY - Constants::BULLET_RADIUS;
+                bullet.vy = -std::abs(bullet.vy);
+            }
+        } else if (bullet.x < minX || bullet.x > maxX ||
+                   bullet.y < minY || bullet.y > maxY) {
             bullet.active = 0;
         }
     }
@@ -463,6 +566,61 @@ void Simulation::updateComets(float dt) {
     }
 }
 
+void Simulation::spawnPowerUp() {
+    int slot = -1;
+    for (int i = 0; i < Constants::MAX_MAP_POWERUPS; ++i) {
+        if (!m_state.powerUps[i].active) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        return;
+    }
+
+    const float margin = Constants::ARENA_BORDER_PADDING + 120.0f;
+    const float spawnX = randomRange(margin, Constants::ARENA_WIDTH_F - margin);
+    const float spawnY = randomRange(margin, Constants::ARENA_HEIGHT_F - margin);
+
+    // Avoid spawning directly on top of a ship
+    for (int p = 0; p < Constants::MAX_PLAYERS; ++p) {
+        const ShipState& ship = m_state.ships[p];
+        if (ship.active && checkCircleOverlap(spawnX, spawnY, Constants::POWERUP_RADIUS + 85.0f,
+                                              ship.x, ship.y, Constants::SHIP_RADIUS)) {
+            return;
+        }
+    }
+
+    std::uniform_int_distribution<int> typeDist(1, 6);
+    const uint8_t randomType = static_cast<uint8_t>(typeDist(m_rng));
+
+    PowerUpState& pu = m_state.powerUps[slot];
+    pu.x        = spawnX;
+    pu.y        = spawnY;
+    pu.lifetime = Constants::POWERUP_MAP_LIFETIME; // Stays on map for 6 seconds
+    pu.type     = randomType;
+    pu.active   = 1;
+}
+
+void Simulation::updatePowerUps(float dt) {
+    m_powerUpSpawnTimer -= dt;
+    if (m_powerUpSpawnTimer <= 0.0f) {
+        spawnPowerUp();
+        m_powerUpSpawnTimer = randomRange(Constants::POWERUP_MIN_SPAWN_INTERVAL, Constants::POWERUP_MAX_SPAWN_INTERVAL);
+    }
+
+    for (int i = 0; i < Constants::MAX_MAP_POWERUPS; ++i) {
+        PowerUpState& pu = m_state.powerUps[i];
+        if (!pu.active) {
+            continue;
+        }
+        pu.lifetime -= dt;
+        if (pu.lifetime <= 0.0f) {
+            pu.active = 0;
+        }
+    }
+}
+
 void Simulation::resolveCollisions() {
     ShipState& s0 = m_state.ships[0];
     ShipState& s1 = m_state.ships[1];
@@ -502,7 +660,53 @@ void Simulation::resolveCollisions() {
         }
     }
 
-    // 2. Bullet-vs-Comet collision (dense comet core absorbs projectiles)
+    // 2. Ship-vs-PowerUp pickup collision
+    for (int i = 0; i < Constants::MAX_MAP_POWERUPS; ++i) {
+        PowerUpState& pu = m_state.powerUps[i];
+        if (!pu.active) {
+            continue;
+        }
+
+        for (int playerId = 0; playerId < Constants::MAX_PLAYERS; ++playerId) {
+            ShipState& ship = m_state.ships[playerId];
+            if (!ship.active) {
+                continue;
+            }
+
+            if (checkCircleOverlap(pu.x, pu.y, Constants::POWERUP_RADIUS,
+                                   ship.x, ship.y, Constants::SHIP_RADIUS)) {
+                pu.active = 0;
+
+                switch (static_cast<PowerUpType>(pu.type)) {
+                    case PowerUpType::FireRateBoost:
+                        ship.fireRateTimer = Constants::POWERUP_FIRERATE_DURATION;
+                        break;
+                    case PowerUpType::SpeedBoost:
+                        ship.speedBoostTimer = Constants::POWERUP_SPEED_DURATION;
+                        break;
+                    case PowerUpType::Shotgun:
+                        ship.shotgunShotsLeft = Constants::POWERUP_SHOTGUN_SHOTS;
+                        break;
+                    case PowerUpType::StealthImmortal:
+                        ship.stealthTimer = Constants::POWERUP_STEALTH_DURATION;
+                        break;
+                    case PowerUpType::BouncyBullets:
+                        ship.bouncyShotsLeft = Constants::POWERUP_BOUNCY_SHOTS;
+                        break;
+                    case PowerUpType::ExtraLife:
+                        if (ship.hp < Constants::SHIP_MAX_HP) {
+                            ship.hp += 1;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+                break;
+            }
+        }
+    }
+
+    // 3. Bullet-vs-Comet collision (dense comet core absorbs projectiles)
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         BulletState& bullet = m_state.bullets[i];
         if (!bullet.active) {
@@ -521,7 +725,7 @@ void Simulation::resolveCollisions() {
         }
     }
 
-    // 3. Comet-vs-Ship collision (hazards deal 1 HP damage and shatter on impact)
+    // 4. Comet-vs-Ship collision (hazards deal 1 HP damage unless ship is immortal via Power-Up #4)
     for (int c = 0; c < Constants::MAX_COMETS; ++c) {
         CometState& comet = m_state.comets[c];
         if (!comet.active) {
@@ -529,7 +733,7 @@ void Simulation::resolveCollisions() {
         }
         for (int targetId = 0; targetId < Constants::MAX_PLAYERS; ++targetId) {
             ShipState& targetShip = m_state.ships[targetId];
-            if (!targetShip.active) {
+            if (!targetShip.active || targetShip.stealthTimer > 0.0f) {
                 continue;
             }
             if (checkCircleOverlap(comet.x, comet.y, comet.radius,
@@ -556,7 +760,7 @@ void Simulation::resolveCollisions() {
         }
     }
 
-    // 4. Bullet-vs-Ship circle collision & HP tracking
+    // 5. Bullet-vs-Ship circle collision & HP tracking (ignores immortal ships via Power-Up #4)
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         BulletState& bullet = m_state.bullets[i];
         if (!bullet.active) {
@@ -570,7 +774,7 @@ void Simulation::resolveCollisions() {
             }
 
             ShipState& targetShip = m_state.ships[targetId];
-            if (!targetShip.active) {
+            if (!targetShip.active || targetShip.stealthTimer > 0.0f) {
                 continue;
             }
 
