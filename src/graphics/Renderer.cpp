@@ -55,20 +55,20 @@ namespace {
 
     PowerUpVisualInfo getPowerUpVisual(PowerUpType type) {
         switch (type) {
-            case PowerUpType::FireRateBoost:   return { { 255, 215,  40, 255 }, "*",   "FR+" };
-            case PowerUpType::SpeedBoost:      return { {  50, 255, 130, 255 }, ">",   "SPD" };
-            case PowerUpType::Shotgun:         return { { 255, 120,  35, 255 }, "#",   "SGN" };
-            case PowerUpType::StealthImmortal: return { { 175, 130, 255, 255 }, "@",   "INV" };
-            case PowerUpType::BouncyBullets:   return { {  80, 255, 230, 255 }, "~",   "BNC" };
-            case PowerUpType::ExtraLife:       return { { 255,  75, 110, 255 }, "+",   "+HP" };
-            case PowerUpType::FullAmmo:        return { {  90, 210, 255, 255 }, "=",   "AMO" };
-            case PowerUpType::RadialBurst:     return { { 255, 255,  90, 255 }, "+",   "360" };
-            case PowerUpType::ShieldBubble:    return { {  50, 175, 255, 255 }, "(O)", "SHD" };
-            case PowerUpType::EnemySlow:       return { { 115, 200, 255, 255 }, "v",   "SLW" };
-            case PowerUpType::EnemyKillRandom: return { { 255,  70,  90, 255 }, "X",   "KIL" };
-            case PowerUpType::EnemyFireSlow:   return { { 255, 165,  80, 255 }, "!",   "EFR" };
-            case PowerUpType::EnemyAlly:       return { {  70, 255, 165, 255 }, "&",   "ALY" };
-            default:                           return { WHITE,                   "?",   "PWR" };
+            case PowerUpType::FireRateBoost:   return { { 255, 215,  40, 255 }, "*",   "FAST FIRE"  };
+            case PowerUpType::SpeedBoost:      return { {  50, 255, 130, 255 }, ">",   "SPEED +30%" };
+            case PowerUpType::Shotgun:         return { { 255, 120,  35, 255 }, "#",   "SHOTGUN"    };
+            case PowerUpType::StealthImmortal: return { { 175, 130, 255, 255 }, "@",   "STEALTH"    };
+            case PowerUpType::BouncyBullets:   return { {  80, 255, 230, 255 }, "~",   "BOUNCY"     };
+            case PowerUpType::ExtraLife:       return { { 255,  75, 110, 255 }, "+",   "+1 LIFE"    };
+            case PowerUpType::FullAmmo:        return { {  90, 210, 255, 255 }, "=",   "FULL AMMO"  };
+            case PowerUpType::RadialBurst:     return { { 255, 255,  90, 255 }, "+",   "360 BURST"  };
+            case PowerUpType::ShieldBubble:    return { {  50, 175, 255, 255 }, "(O)", "SHIELD"     };
+            case PowerUpType::EnemySlow:       return { { 115, 200, 255, 255 }, "v",   "SLOW FOES"  };
+            case PowerUpType::EnemyKillRandom: return { { 255,  70,  90, 255 }, "X",   "KILL FOE"   };
+            case PowerUpType::EnemyFireSlow:   return { { 255, 165,  80, 255 }, "!",   "WEAK FIRE"  };
+            case PowerUpType::EnemyAlly:       return { {  70, 255, 165, 255 }, "&",   "ALLY FOE"   };
+            default:                           return { WHITE,                   "?",   "POWER-UP"   };
         }
     }
 }
@@ -467,9 +467,18 @@ void Renderer::drawPowerUps(const GameState& state) {
 
         DrawRing(center, r + 5.0f, r + 7.5f, -90.0f, -90.0f + 360.0f * lifeRatio, 28, info.color);
 
-        const int fontSize = 14;
-        const int textW = MeasureText(info.shortName, fontSize);
-        DrawText(info.shortName, static_cast<int>(pu.x) - textW / 2, static_cast<int>(pu.y) - fontSize / 2, fontSize, WHITE);
+        const int symSize = 16;
+        const int symW = MeasureText(info.symbol, symSize);
+        DrawText(info.symbol, static_cast<int>(pu.x) - symW / 2, static_cast<int>(pu.y) - symSize / 2, symSize, WHITE);
+
+        const int labelSize = 14;
+        const int labelW = MeasureText(info.shortName, labelSize);
+        const int labelX = static_cast<int>(pu.x) - labelW / 2;
+        const int labelY = static_cast<int>(pu.y + r + 11.0f);
+        DrawRectangleRounded(
+            { static_cast<float>(labelX - 6), static_cast<float>(labelY - 2), static_cast<float>(labelW + 12), static_cast<float>(labelSize + 4) },
+            0.35f, 4, { 8, 12, 24, 205 });
+        DrawText(info.shortName, labelX, labelY, labelSize, info.color);
     }
 }
 
@@ -779,18 +788,26 @@ void Renderer::drawHUD(const GameState& state,
     const bool redAlertPulse = (std::sin(static_cast<float>(GetTime()) * 24.0f) > 0.0f);
 
     // -------------------------------------------------------------------------
-    // Player 1 (Left - Cyan) Health Bar & Shield Pips
+    // Player 1 (Left - Cyan) Health Bar, Shield Pips & Co-op Kill Counter
     // -------------------------------------------------------------------------
     const int hudY = 28;
     const int p1X  = 36;
     const Color p1HudCol = (p1.hp == 1 && redAlertPulse) ? Color{ 255, 35, 50, 255 } : NEON_CYAN;
-    DrawText("P1 [HOST - CYAN]", p1X, hudY, 18, p1HudCol);
+    const std::string p1Title = isCoop
+        ? ("P1 [HOST - CYAN]   |   KILLS: " + std::to_string(p1.kills))
+        : "P1 [HOST - CYAN]";
+    DrawText(p1Title.c_str(), p1X, hudY, 18, p1HudCol);
 
-    for (int hp = 0; hp < Constants::SHIP_MAX_HP; ++hp) {
+    const int p1MaxHp = std::max<int>(1, p1.maxHp);
+    const float p1SegGap = (p1MaxHp <= 4) ? 6.0f : 4.0f;
+    const float p1BarW = (p1MaxHp <= 3) ? 148.0f : std::min(260.0f, 148.0f + (p1MaxHp - 3) * 28.0f);
+    const float p1SegW = (p1BarW - static_cast<float>(p1MaxHp - 1) * p1SegGap) / static_cast<float>(p1MaxHp);
+
+    for (int hp = 0; hp < p1MaxHp; ++hp) {
         const Rectangle seg = {
-            static_cast<float>(p1X + hp * 52),
+            static_cast<float>(p1X) + static_cast<float>(hp) * (p1SegW + p1SegGap),
             static_cast<float>(hudY + 26),
-            44.0f,
+            p1SegW,
             14.0f
         };
         if (hp < p1.hp) {
@@ -804,26 +821,34 @@ void Renderer::drawHUD(const GameState& state,
 
     if (p1.shieldHp > 0) {
         for (int s = 0; s < p1.shieldHp; ++s) {
-            const Rectangle sSeg = { static_cast<float>(p1X + 162 + s * 24), static_cast<float>(hudY + 26), 18.0f, 14.0f };
+            const Rectangle sSeg = { static_cast<float>(p1X) + p1BarW + 10.0f + static_cast<float>(s * 24), static_cast<float>(hudY + 26), 18.0f, 14.0f };
             DrawRectangleRec(sSeg, SHIELD_BLUE);
             DrawRectangleLinesEx(sSeg, 1.5f, WHITE);
         }
     }
 
     // -------------------------------------------------------------------------
-    // Player 2 (Right - Magenta) Health Bar & Shield Pips
+    // Player 2 (Right - Magenta) Health Bar, Shield Pips & Co-op Kill Counter
     // -------------------------------------------------------------------------
-    const char* p2Label = "P2 [CLIENT - MAGENTA]";
-    const int p2LabelWidth = MeasureText(p2Label, 18);
+    const std::string p2Title = isCoop
+        ? ("KILLS: " + std::to_string(p2.kills) + "   |   P2 [CLIENT - MAGENTA]")
+        : "P2 [CLIENT - MAGENTA]";
+    const int p2LabelWidth = MeasureText(p2Title.c_str(), 18);
     const int p2RightEdge = Constants::ARENA_WIDTH - 36;
     const Color p2HudCol = (p2.hp == 1 && redAlertPulse) ? Color{ 255, 35, 50, 255 } : NEON_MAGENTA;
-    DrawText(p2Label, p2RightEdge - p2LabelWidth, hudY, 18, p2HudCol);
+    DrawText(p2Title.c_str(), p2RightEdge - p2LabelWidth, hudY, 18, p2HudCol);
 
-    for (int hp = 0; hp < Constants::SHIP_MAX_HP; ++hp) {
+    const int p2MaxHp = std::max<int>(1, p2.maxHp);
+    const float p2SegGap = (p2MaxHp <= 4) ? 6.0f : 4.0f;
+    const float p2BarW = (p2MaxHp <= 3) ? 148.0f : std::min(260.0f, 148.0f + (p2MaxHp - 3) * 28.0f);
+    const float p2SegW = (p2BarW - static_cast<float>(p2MaxHp - 1) * p2SegGap) / static_cast<float>(p2MaxHp);
+    const float p2BarStartX = static_cast<float>(p2RightEdge) - p2BarW;
+
+    for (int hp = 0; hp < p2MaxHp; ++hp) {
         const Rectangle seg = {
-            static_cast<float>(p2RightEdge - (Constants::SHIP_MAX_HP - hp) * 52 + 8),
+            p2BarStartX + static_cast<float>(hp) * (p2SegW + p2SegGap),
             static_cast<float>(hudY + 26),
-            44.0f,
+            p2SegW,
             14.0f
         };
         if (hp < p2.hp) {
@@ -837,7 +862,7 @@ void Renderer::drawHUD(const GameState& state,
 
     if (p2.shieldHp > 0) {
         for (int s = 0; s < p2.shieldHp; ++s) {
-            const Rectangle sSeg = { static_cast<float>(p2RightEdge - 180 - s * 24), static_cast<float>(hudY + 26), 18.0f, 14.0f };
+            const Rectangle sSeg = { p2BarStartX - 28.0f - static_cast<float>(s * 24), static_cast<float>(hudY + 26), 18.0f, 14.0f };
             DrawRectangleRec(sSeg, SHIELD_BLUE);
             DrawRectangleLinesEx(sSeg, 1.5f, WHITE);
         }
@@ -892,27 +917,27 @@ void Renderer::drawHUD(const GameState& state,
     auto formatActivePowerUps = [&](const ShipState& s) -> std::string {
         std::string list;
         if (s.shieldHp > 0) {
-            list += "[SHD x" + std::to_string(s.shieldHp) + "] ";
+            list += "[SHIELD x" + std::to_string(s.shieldHp) + "] ";
         } else if (s.shieldCooldownTimer > 0.0f) {
-            list += "[SHD CD " + std::to_string(static_cast<int>(std::ceil(s.shieldCooldownTimer))) + "s] ";
+            list += "[SHIELD CD " + std::to_string(static_cast<int>(std::ceil(s.shieldCooldownTimer))) + "s] ";
         }
         if (s.fireRateTimer > 0.0f) {
-            list += "[FR+ " + std::to_string(static_cast<int>(std::ceil(s.fireRateTimer))) + "s] ";
+            list += "[FAST FIRE " + std::to_string(static_cast<int>(std::ceil(s.fireRateTimer))) + "s] ";
         }
         if (s.speedBoostTimer > 0.0f) {
-            list += "[SPD+ " + std::to_string(static_cast<int>(std::ceil(s.speedBoostTimer))) + "s] ";
+            list += "[SPEED +30% " + std::to_string(static_cast<int>(std::ceil(s.speedBoostTimer))) + "s] ";
         }
         if (s.stealthTimer > 0.0f) {
-            list += "[INV " + std::to_string(static_cast<int>(std::ceil(s.stealthTimer))) + "s] ";
+            list += "[STEALTH " + std::to_string(static_cast<int>(std::ceil(s.stealthTimer))) + "s] ";
         }
         if (s.shotgunShotsLeft > 0) {
-            list += "[SGN x" + std::to_string(s.shotgunShotsLeft) + "] ";
+            list += "[SHOTGUN x" + std::to_string(s.shotgunShotsLeft) + "] ";
         }
         if (s.bouncyShotsLeft > 0) {
-            list += "[BNC x" + std::to_string(s.bouncyShotsLeft) + "] ";
+            list += "[BOUNCY x" + std::to_string(s.bouncyShotsLeft) + "] ";
         }
         if (s.radialShotsLeft > 0) {
-            list += "[360 x" + std::to_string(s.radialShotsLeft) + "] ";
+            list += "[360 BURST x" + std::to_string(s.radialShotsLeft) + "] ";
         }
         if (isCoop && s.allyHealHits > 0) {
             list += "[ALLY HEAL " + std::to_string(s.allyHealHits) + "/2] ";
