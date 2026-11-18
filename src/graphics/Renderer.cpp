@@ -449,23 +449,43 @@ void Renderer::drawVectorShip(const ShipState& ship, int playerId, bool isLocalV
     Color glowColor = (playerId == 0) ? NEON_CYAN_GLOW : NEON_MAG_GLOW;
     Color coreColor = (playerId == 0) ? NEON_CYAN_CORE : NEON_MAG_CORE;
 
+    float drawX = ship.x;
+    float drawY = ship.y;
+
+    // Low-health critical warning (1 HP remaining): vibrate ship and flash in red
+    const bool isLowHealth = (ship.hp == 1);
+    if (isLowHealth) {
+        const float elapsed = static_cast<float>(GetTime());
+        drawX += std::sin(elapsed * 55.0f + playerId * 3.1f) * 2.6f +
+                 static_cast<float>(GetRandomValue(-15, 15)) * 0.1f;
+        drawY += std::cos(elapsed * 49.0f + playerId * 1.7f) * 2.6f +
+                 static_cast<float>(GetRandomValue(-15, 15)) * 0.1f;
+
+        const bool flashRed = (std::sin(elapsed * 26.0f) > -0.15f);
+        if (flashRed) {
+            mainColor = { 255,  25,  40, 255 };
+            glowColor = { 255,   0,  20, 145 };
+            coreColor = { 255, 195, 195, 255 };
+        }
+    }
+
     if (isStealthed) {
         // Local player sees a translucent cloaked ghost outline of their own ship
         mainColor.a = 75;
         glowColor.a = 35;
         coreColor.a = 90;
-        DrawRing({ ship.x, ship.y }, Constants::SHIP_RADIUS + 6.0f, Constants::SHIP_RADIUS + 8.0f,
+        DrawRing({ drawX, drawY }, Constants::SHIP_RADIUS + 6.0f, Constants::SHIP_RADIUS + 8.0f,
                  0.0f, 360.0f, 28, { 175, 130, 255, 110 });
     }
 
     const float c = std::cos(ship.angle);
     const float s = std::sin(ship.angle);
 
-    // Helper lambda to transform ship-local coordinates to world space
+    // Helper lambda to transform ship-local coordinates to world space (with vibration offset)
     auto toWorld = [&](float lx, float ly) -> Vector2 {
         return {
-            ship.x + (lx * c - ly * s),
-            ship.y + (lx * s + ly * c)
+            drawX + (lx * c - ly * s),
+            drawY + (lx * s + ly * c)
         };
     };
 
@@ -540,13 +560,15 @@ void Renderer::drawHUD(const GameState& state,
                        uint32_t pingMs) {
     const ShipState& p1 = state.ships[0];
     const ShipState& p2 = state.ships[1];
+    const bool redAlertPulse = (std::sin(static_cast<float>(GetTime()) * 24.0f) > 0.0f);
 
     // -------------------------------------------------------------------------
     // Player 1 (Left - Cyan) Health Bar & Label
     // -------------------------------------------------------------------------
     const int hudY = 28;
     const int p1X  = 36;
-    DrawText("P1 [HOST - CYAN]", p1X, hudY, 18, NEON_CYAN);
+    const Color p1HudCol = (p1.hp == 1 && redAlertPulse) ? Color{ 255, 35, 50, 255 } : NEON_CYAN;
+    DrawText("P1 [HOST - CYAN]", p1X, hudY, 18, p1HudCol);
 
     for (int hp = 0; hp < Constants::SHIP_MAX_HP; ++hp) {
         const Rectangle seg = {
@@ -556,7 +578,7 @@ void Renderer::drawHUD(const GameState& state,
             14.0f
         };
         if (hp < p1.hp) {
-            DrawRectangleRec(seg, NEON_CYAN);
+            DrawRectangleRec(seg, p1HudCol);
             DrawRectangleLinesEx(seg, 1.5f, WHITE);
         } else {
             DrawRectangleRec(seg, { 20, 40, 55, 140 });
@@ -570,7 +592,8 @@ void Renderer::drawHUD(const GameState& state,
     const char* p2Label = "P2 [CLIENT - MAGENTA]";
     const int p2LabelWidth = MeasureText(p2Label, 18);
     const int p2RightEdge = Constants::ARENA_WIDTH - 36;
-    DrawText(p2Label, p2RightEdge - p2LabelWidth, hudY, 18, NEON_MAGENTA);
+    const Color p2HudCol = (p2.hp == 1 && redAlertPulse) ? Color{ 255, 35, 50, 255 } : NEON_MAGENTA;
+    DrawText(p2Label, p2RightEdge - p2LabelWidth, hudY, 18, p2HudCol);
 
     for (int hp = 0; hp < Constants::SHIP_MAX_HP; ++hp) {
         const Rectangle seg = {
@@ -580,7 +603,7 @@ void Renderer::drawHUD(const GameState& state,
             14.0f
         };
         if (hp < p2.hp) {
-            DrawRectangleRec(seg, NEON_MAGENTA);
+            DrawRectangleRec(seg, p2HudCol);
             DrawRectangleLinesEx(seg, 1.5f, WHITE);
         } else {
             DrawRectangleRec(seg, { 55, 20, 45, 140 });
