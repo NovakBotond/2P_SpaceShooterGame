@@ -244,6 +244,34 @@ void Renderer::updateParticles(const GameState& state, float dt) {
         }
     }
 
+    // Spawn overheat smoke puffs at the front nose when weapon overheats (2s)
+    for (int i = 0; i < Constants::MAX_PLAYERS; ++i) {
+        const ShipState& ship = state.ships[i];
+        if (!ship.active || ship.overheatSmokeTimer <= 0.0f || ship.stealthTimer > 0.0f) {
+            continue;
+        }
+
+        const float noseX = ship.x + std::cos(ship.angle) * (Constants::SHIP_RADIUS * 1.25f);
+        const float noseY = ship.y + std::sin(ship.angle) * (Constants::SHIP_RADIUS * 1.25f);
+
+        for (int p = 0; p < 2; ++p) {
+            const float spread = (static_cast<float>(GetRandomValue(-100, 100)) / 100.0f) * 0.75f;
+            const float speed  = static_cast<float>(GetRandomValue(45, 115));
+            const float pAngle = ship.angle + spread;
+
+            ThrustParticle smoke{};
+            smoke.x       = noseX;
+            smoke.y       = noseY;
+            smoke.vx      = std::cos(pAngle) * speed + ship.vx * 0.35f;
+            smoke.vy      = std::sin(pAngle) * speed + ship.vy * 0.35f;
+            smoke.maxLife = static_cast<float>(GetRandomValue(42, 72)) / 100.0f;
+            smoke.life    = smoke.maxLife;
+            smoke.size    = static_cast<float>(GetRandomValue(55, 95)) / 10.0f;
+            smoke.ownerId = 3; // 3 = Overheat Cannon Smoke
+            m_particles.push_back(smoke);
+        }
+    }
+
     // Integrate and prune expired particles
     for (auto& part : m_particles) {
         part.x += part.vx * dt;
@@ -315,6 +343,16 @@ void Renderer::drawParticles() {
     for (const auto& part : m_particles) {
         const float ratio = std::clamp(part.life / part.maxLife, 0.0f, 1.0f);
         const unsigned char alpha = static_cast<unsigned char>(ratio * 240.0f);
+
+        if (part.ownerId == 3) {
+            // Overheat smoke expands as it dissipates
+            const float puffRadius = part.size * (1.75f - ratio * 0.65f);
+            const Color smokeOuter = { 155, 160, 175, static_cast<unsigned char>(ratio * 155.0f) };
+            const Color smokeCore  = { 215, 195, 185, static_cast<unsigned char>(ratio * 105.0f) };
+            DrawCircleV({ part.x, part.y }, puffRadius, smokeOuter);
+            DrawCircleV({ part.x, part.y }, puffRadius * 0.52f, smokeCore);
+            continue;
+        }
 
         Color primary = (part.ownerId == 0)
             ? NEON_CYAN
@@ -407,6 +445,10 @@ void Renderer::drawPowerUps(const GameState& state) {
             case PowerUpType::ExtraLife:
                 puColor = { 255,  75, 110, 255 }; // Crimson Pink
                 label   = "+HP";
+                break;
+            case PowerUpType::FullAmmo:
+                puColor = {  90, 210, 255, 255 }; // Sky Cyan-Gold
+                label   = "AMO";
                 break;
             default:
                 break;
@@ -525,6 +567,13 @@ void Renderer::drawVectorShip(const ShipState& ship, int playerId, bool isLocalV
         DrawLineEx(flameRight, flameTip, 3.5f, mainColor);
         DrawLineEx(tailIndent, flameTip, 2.0f, WHITE);
     }
+
+    // 5. Glowing overheated cannon tip on the nose when smoking
+    if (ship.overheatSmokeTimer > 0.0f) {
+        const float glowPulse = 0.7f + 0.3f * std::sin(static_cast<float>(GetTime()) * 22.0f);
+        DrawCircleV(nose, 6.5f * glowPulse, { 255, 70, 20, 170 });
+        DrawCircleV(nose, 3.0f, { 255, 210, 140, 240 });
+    }
 }
 
 void Renderer::drawBullets(const GameState& state) {
@@ -611,7 +660,53 @@ void Renderer::drawHUD(const GameState& state,
         }
     }
 
-    // Active Power-Up Status Lists under P1 and P2 Health Bars
+    // -------------------------------------------------------------------------
+    // Shooting Energy / Overheat Bars (directly beneath health bars)
+    // -------------------------------------------------------------------------
+    auto drawAmmoBar = [&](const ShipState& ship, float x, float y, float width, bool rightAligned, Color baseColor) {
+        const float ratio = std::clamp(ship.ammo, 0.0f, 1.0f);
+        const Rectangle bgRect = { x, y, width, 10.0f };
+        DrawRectangleRec(bgRect, { 15, 22, 38, 190 });
+
+        Color fillColor = baseColor;
+        if (ship.overheatSmokeTimer > 0.0f) {
+            fillColor = redAlertPulse ? Color{ 255, 45, 55, 255 } : Color{ 190, 30, 35, 255 };
+        } else if (ship.ammoOverheated) {
+            fillColor = { 255, 110, 45, 255 }; // Orange-red slow-recharge penalty indicator
+        } else if (ratio < 0.28f) {
+            fillColor = { 255, 200, 60, 255 }; // Low ammo warning
+        }
+
+        const float fillW = width * ratio;
+        if (fillW > 0.5f) {
+            const float fillX = rightAligned ? (x + width - fillW) : x;
+            DrawRectangleRec({ fillX, y, fillW, 10.0f }, fillColor);
+        }
+
+        const Color borderCol = (ship.overheatSmokeTimer > 0.0f || ship.ammoOverheated)
+            ? Color{ 255, 80, 70, 220 }
+            : Color{ 180, 220, 255, 160 };
+        DrawRectangleLinesEx(bgRect, 1.2f, borderCol);
+
+        if (ship.overheatSmokeTimer > 0.0f) {
+            const char* warn = "OVERHEAT!";
+            const int warnW = MeasureText(warn, 13);
+            const int textX = rightAligned ? static_cast<int>(x + width - warnW) : static_cast<int>(x);
+            DrawText(warn, textX, static_cast<int>(y + 13.0f), 13, { 255, 70, 70, 255 });
+        } else if (ship.ammoOverheated) {
+            const char* warn = "SLOW RECHARGE";
+            const int warnW = MeasureText(warn, 13);
+            const int textX = rightAligned ? static_cast<int>(x + width - warnW) : static_cast<int>(x);
+            DrawText(warn, textX, static_cast<int>(y + 13.0f), 13, { 255, 155, 70, 240 });
+        }
+    };
+
+    const float barWidth = 148.0f;
+    const float barY = static_cast<float>(hudY + 46);
+    drawAmmoBar(p1, static_cast<float>(p1X), barY, barWidth, false, { 90, 245, 255, 255 });
+    drawAmmoBar(p2, static_cast<float>(p2RightEdge) - barWidth, barY, barWidth, true, { 255, 100, 225, 255 });
+
+    // Active Power-Up Status Lists under Shooting Bars
     auto formatActivePowerUps = [](const ShipState& s) -> std::string {
         std::string list;
         if (s.fireRateTimer > 0.0f) {
@@ -632,15 +727,17 @@ void Renderer::drawHUD(const GameState& state,
         return list;
     };
 
+    const int buffOffsetY = (p1.overheatSmokeTimer > 0.0f || p1.ammoOverheated) ? 76 : 64;
     const std::string p1Buffs = formatActivePowerUps(p1);
     if (!p1Buffs.empty()) {
-        DrawText(p1Buffs.c_str(), p1X, hudY + 48, 15, { 120, 255, 190, 240 });
+        DrawText(p1Buffs.c_str(), p1X, hudY + buffOffsetY, 15, { 120, 255, 190, 240 });
     }
 
+    const int p2BuffOffsetY = (p2.overheatSmokeTimer > 0.0f || p2.ammoOverheated) ? 76 : 64;
     const std::string p2Buffs = formatActivePowerUps(p2);
     if (!p2Buffs.empty()) {
         const int p2BuffW = MeasureText(p2Buffs.c_str(), 15);
-        DrawText(p2Buffs.c_str(), p2RightEdge - p2BuffW, hudY + 48, 15, { 255, 160, 235, 240 });
+        DrawText(p2Buffs.c_str(), p2RightEdge - p2BuffW, hudY + p2BuffOffsetY, 15, { 255, 160, 235, 240 });
     }
 
     // -------------------------------------------------------------------------
