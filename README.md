@@ -89,8 +89,9 @@ Open two terminal windows in the project root (or launch the executable twice):
 - **Toggle Fullscreen / Windowed:** `F11` (anytime) or `F` (on start menu)
 - **Disconnect / Return to Menu:** `ESC`
 
-### Arena Hazards & Visual Alerts
+### Arena Hazards, Shooting Energy & Visual Alerts
 - **Expanded 1920x1080 Arena:** Full HD virtual coordinate space scaled cleanly to any windowed or fullscreen display.
+- **Shooting Bar & Overheat:** Displayed beneath each player's health bar. Empties after **4 seconds** of continuous firing. Releasing fire early recharges **30% faster**; emptying it completely causes the front of the ship to **smoke for 2 seconds** (cannot fire) and applies a **slower recharge penalty**.
 - **Random Comets:** Fiery comets periodically traverse the arena along random trajectory vectors with individual lifetimes (capped at max 3 simultaneously). Colliding with a comet deals 1 HP damage and shatters the comet.
 - **Low-Health Warning:** At `1 HP`, a player's ship vibrates rapidly and flashes in neon crimson red.
 
@@ -101,3 +102,4 @@ Open two terminal windows in the project root (or launch the executable twice):
 4. **`INV` — Stealth & Immortal:** Ship becomes **invisible** to the opponent and **immortal** for **6 seconds**, but **cannot fire** while cloaked.
 5. **`BNC` — Bouncy Bullets:** In the next **6 shots**, bullets ricochet off arena walls until they decay after **5 seconds**.
 6. **`+HP` — Extra Life:** Restores **+1 HP** (if already at `3 HP`, it can still be picked up to deny the opponent without exceeding `3 HP`).
+7. **`AMO` — Instant Full Ammo:** Immediately refills the shooting bar to **100%** and clears any overheat smoke or recharge penalty.
