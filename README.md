@@ -98,23 +98,24 @@ Open two terminal windows in the project root (or launch the executable twice):
   - Every **2nd wave**, normal enemy health increases by **+1 HP line**.
   - Every **5th wave**, enemy movement speed increases by **+10%**.
   - When **2–3 enemies remain** at the end of a wave, a larger **Wave Boss** spawns with **2× health** and **2× fire rate**.
+  - **Kill Rewards & Kill Counters:** Each enemy kill in Co-op grants **+1 HP life** (up to your max HP) and increments your left/right **`KILLS`** HUD counter. Killing a **Wave Boss** grants **+1 permanent Max HP**!
   - **Friendly-Fire Teammate Healing (Co-op):** Shooting your teammate **twice** restores **+1 HP line** to help keep the mission going!
 - **Expanded 1920x1080 Arena:** Full HD virtual coordinate space scaled cleanly to any windowed or fullscreen display.
 - **Shooting Bar & Overheat:** Displayed beneath each player's health bar. Empties after **4 seconds** of continuous firing. Releasing fire early recharges **30% faster**; emptying it completely causes the front of the ship to **smoke for 2 seconds** (cannot fire) and applies a **slower recharge penalty**.
-- **Destructible Comets:** Fiery comets periodically traverse the arena along random vectors (capped at max 3 simultaneously). Shooting a comet **3 times** destroys it; colliding with one deals 1 HP damage.
+- **Destructible Comets:** Fiery comets periodically traverse the arena along random vectors (capped at max 3 simultaneously). Shooting a comet **3 times** destroys it; colliding with one deals 1 HP damage to **both players and enemies**.
 - **Low-Health Warning:** At `1 HP`, a player's ship vibrates rapidly and flashes in neon crimson red.
 
-### Power-Ups (Max 2 on Map, 6-Second Map Lifetime, Short Name + Symbol Above Ship)
-1. **`* FR+` — Fire Rate Boost:** Increases firing rate by **+30%** for **10 seconds**.
-2. **`> SPD` — Ship Speed Boost:** Increases max ship speed & thrust by **+30%** for **10 seconds**.
-3. **`# SGN` — Shotgun:** The next **3 shots** fire a 3-bullet spread fan.
-4. **`@ INV` — Stealth & Immortal:** Ship becomes **invisible** and **immortal** for **6 seconds**, but **cannot fire** while cloaked.
-5. **`~ BNC` — Bouncy Bullets:** In the next **6 shots**, bullets ricochet off arena walls until they decay after **5 seconds**.
-6. **`+ +HP` — Extra Life:** Restores **+1 HP** (if already at `3 HP`, it can still be picked up without exceeding `3 HP`).
-7. **`= AMO` — Instant Full Ammo:** Immediately refills the shooting bar to **100%** and clears any overheat smoke or recharge penalty.
-8. **`+ 360` — 45° Radial Burst:** Allows firing **1 omnidirectional burst** (8 bullets every **45°**) that bounce and remain for **5 seconds**.
-9. **`(O) SHD` — Blue Bubble Shield:** Grants a blue bubble with **2 shield health lines**; after absorbing 2 hits it disappears and cannot be picked up again for **30 seconds**.
-10. **`v SLW` — Enemy Speed Down (Waves):** Decreases enemy movement speed by **30%** for **10 seconds**.
-11. **`X KIL` — Random Enemy Smite (Waves):** Instantly kills **1 random active enemy**.
-12. **`! EFR` — Enemy Fire Rate Down (Waves):** Decreases enemy firing rate by **30%** for **10 seconds**.
-13. **`& ALY` — Mind-Control Ally (Waves):** Converts **1 enemy** into an ally that shoots hostile enemies for **5 seconds**.
+### Power-Ups (Max 2 on Map, 6-Second Map Lifetime, Readable Name + Symbol)
+1. **`* FAST FIRE` — Fire Rate Boost:** Increases firing rate by **+30%** for **10 seconds**.
+2. **`> SPEED +30%` — Ship Speed Boost:** Increases max ship speed & thrust by **+30%** for **10 seconds**.
+3. **`# SHOTGUN` — Shotgun:** The next **3 shots** fire a 3-bullet spread fan.
+4. **`@ STEALTH` — Stealth & Immortal:** Ship becomes **invisible** and **immortal** for **6 seconds**, but **cannot fire** while cloaked.
+5. **`~ BOUNCY` — Bouncy Bullets:** In the next **6 shots**, bullets ricochet off arena walls until they decay after **5 seconds**.
+6. **`+ +1 LIFE` — Extra Life:** Restores **+1 HP** (up to your Max HP; still consumable at full health).
+7. **`= FULL AMMO` — Instant Full Ammo:** Immediately refills the shooting bar to **100%** and clears any overheat smoke or recharge penalty.
+8. **`+ 360 BURST` — 45° Radial Burst:** Allows firing **1 omnidirectional burst** (8 bullets every **45°**) that bounce and remain for **5 seconds**.
+9. **`(O) SHIELD` — Blue Bubble Shield:** Grants a blue bubble with **2 shield health lines** and lets you **ram enemies without taking damage** (`1 hit = -1 HP` to enemy). After tanking 2 hits it breaks and has a **30-second** pickup cooldown.
+10. **`v SLOW FOES` — Enemy Speed Down (Waves):** Decreases enemy movement speed by **30%** for **10 seconds**.
+11. **`X KILL FOE` — Random Enemy Smite (Waves):** Instantly kills **1 random active enemy**.
+12. **`! WEAK FIRE` — Enemy Fire Rate Down (Waves):** Decreases enemy firing rate by **30%** for **10 seconds**.
+13. **`& ALLY FOE` — Mind-Control Ally (Waves):** Converts **1 enemy** into an ally that shoots hostile enemies for **5 seconds**.
