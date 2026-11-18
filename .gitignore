@@ -20,3 +20,6 @@ out/
 .vs/
 .vscode/
 .idea/
+
+# Local Codebase Explanation Guide
+CODEBASE_EXPLANATION.md
