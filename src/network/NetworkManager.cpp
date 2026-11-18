@@ -17,18 +17,27 @@ namespace {
         uint8_t      packetType;
         uint32_t     tick;
         uint32_t     lastClientTick;
+        uint8_t      gameMode;
         ShipState    ships[Constants::MAX_PLAYERS];
         CometState   comets[Constants::MAX_COMETS];
         PowerUpState powerUps[Constants::MAX_MAP_POWERUPS];
+        uint16_t     currentWave;
+        uint16_t     waveRemainingKills;
+        float        enemySlowTimer;
+        float        enemyFireSlowTimer;
+        uint8_t      bossActive;
         uint8_t      lastRoundWinner;
         float        roundBannerTimer;
+        uint8_t      bannerCode;
         uint8_t      activeBulletCount;
+        uint8_t      activeEnemyCount;
     };
 #pragma pack(pop)
 
     void zeroGameState(GameState& s) {
         std::memset(&s, 0, sizeof(GameState));
         s.packetType      = static_cast<uint8_t>(PacketType::GAME_STATE);
+        s.currentWave     = 1;
         s.lastRoundWinner = 255;
         for (int i = 0; i < Constants::MAX_PLAYERS; ++i) {
             s.ships[i].hp     = Constants::SHIP_MAX_HP;
@@ -224,9 +233,11 @@ void NetworkManager::pollEvents() {
                         CompactGameStateHeader header{};
                         std::memcpy(&header, event.packet->data, sizeof(CompactGameStateHeader));
 
-                        if (header.activeBulletCount <= Constants::MAX_BULLETS) {
-                            const size_t expectedSize = sizeof(CompactGameStateHeader) +
-                                static_cast<size_t>(header.activeBulletCount) * sizeof(BulletState);
+                        if (header.activeBulletCount <= Constants::MAX_BULLETS &&
+                            header.activeEnemyCount <= Constants::MAX_ENEMIES) {
+                            const size_t bulletsBytes = static_cast<size_t>(header.activeBulletCount) * sizeof(BulletState);
+                            const size_t enemiesBytes = static_cast<size_t>(header.activeEnemyCount) * sizeof(EnemyState);
+                            const size_t expectedSize = sizeof(CompactGameStateHeader) + bulletsBytes + enemiesBytes;
 
                             if (event.packet->dataLength == expectedSize) {
                                 const bool isFirst = !m_hasReceivedState;
@@ -237,19 +248,28 @@ void NetworkManager::pollEvents() {
                                 if (isFirst || isNewer || isMatchRestart) {
                                     GameState reconstructed;
                                     std::memset(&reconstructed, 0, sizeof(GameState));
-                                    reconstructed.packetType       = header.packetType;
-                                    reconstructed.tick             = header.tick;
-                                    reconstructed.lastClientTick   = header.lastClientTick;
+                                    reconstructed.packetType         = header.packetType;
+                                    reconstructed.tick               = header.tick;
+                                    reconstructed.lastClientTick     = header.lastClientTick;
+                                    reconstructed.gameMode           = header.gameMode;
                                     std::memcpy(reconstructed.ships, header.ships, sizeof(header.ships));
                                     std::memcpy(reconstructed.comets, header.comets, sizeof(header.comets));
                                     std::memcpy(reconstructed.powerUps, header.powerUps, sizeof(header.powerUps));
-                                    reconstructed.lastRoundWinner  = header.lastRoundWinner;
-                                    reconstructed.roundBannerTimer = header.roundBannerTimer;
+                                    reconstructed.currentWave        = header.currentWave;
+                                    reconstructed.waveRemainingKills = header.waveRemainingKills;
+                                    reconstructed.enemySlowTimer     = header.enemySlowTimer;
+                                    reconstructed.enemyFireSlowTimer = header.enemyFireSlowTimer;
+                                    reconstructed.bossActive         = header.bossActive;
+                                    reconstructed.lastRoundWinner    = header.lastRoundWinner;
+                                    reconstructed.roundBannerTimer   = header.roundBannerTimer;
+                                    reconstructed.bannerCode         = header.bannerCode;
 
-                                    if (header.activeBulletCount > 0) {
-                                        std::memcpy(reconstructed.bullets,
-                                                    event.packet->data + sizeof(CompactGameStateHeader),
-                                                    static_cast<size_t>(header.activeBulletCount) * sizeof(BulletState));
+                                    const uint8_t* payload = event.packet->data + sizeof(CompactGameStateHeader);
+                                    if (bulletsBytes > 0) {
+                                        std::memcpy(reconstructed.bullets, payload, bulletsBytes);
+                                    }
+                                    if (enemiesBytes > 0) {
+                                        std::memcpy(reconstructed.enemies, payload + bulletsBytes, enemiesBytes);
                                     }
 
                                     std::memcpy(&m_latestGameState, &reconstructed, sizeof(GameState));
@@ -322,36 +342,52 @@ void NetworkManager::broadcastGameState(const GameState& state) {
         return;
     }
 
-    // Serialize compact snapshot containing only active bullets (~75 bytes idle vs 780 bytes)
-    uint8_t wireBuffer[sizeof(CompactGameStateHeader) + Constants::MAX_BULLETS * sizeof(BulletState)]{};
+    // Serialize compact snapshot containing only active bullets and active enemies
+    uint8_t wireBuffer[sizeof(CompactGameStateHeader) +
+                       Constants::MAX_BULLETS * sizeof(BulletState) +
+                       Constants::MAX_ENEMIES * sizeof(EnemyState)]{};
 
     CompactGameStateHeader header{};
-    header.packetType       = static_cast<uint8_t>(PacketType::GAME_STATE);
-    header.tick             = state.tick;
-    header.lastClientTick   = state.lastClientTick;
+    header.packetType         = static_cast<uint8_t>(PacketType::GAME_STATE);
+    header.tick               = state.tick;
+    header.lastClientTick     = state.lastClientTick;
+    header.gameMode           = state.gameMode;
     std::memcpy(header.ships, state.ships, sizeof(header.ships));
     std::memcpy(header.comets, state.comets, sizeof(header.comets));
     std::memcpy(header.powerUps, state.powerUps, sizeof(header.powerUps));
-    header.lastRoundWinner  = state.lastRoundWinner;
-    header.roundBannerTimer = state.roundBannerTimer;
+    header.currentWave        = state.currentWave;
+    header.waveRemainingKills = state.waveRemainingKills;
+    header.enemySlowTimer     = state.enemySlowTimer;
+    header.enemyFireSlowTimer = state.enemyFireSlowTimer;
+    header.bossActive         = state.bossActive;
+    header.lastRoundWinner    = state.lastRoundWinner;
+    header.roundBannerTimer   = state.roundBannerTimer;
+    header.bannerCode         = state.bannerCode;
 
-    uint8_t activeCount = 0;
+    size_t writeOffset = sizeof(CompactGameStateHeader);
+    uint8_t activeBullets = 0;
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         if (state.bullets[i].active) {
-            std::memcpy(wireBuffer + sizeof(CompactGameStateHeader) +
-                        static_cast<size_t>(activeCount) * sizeof(BulletState),
-                        &state.bullets[i],
-                        sizeof(BulletState));
-            ++activeCount;
+            std::memcpy(wireBuffer + writeOffset, &state.bullets[i], sizeof(BulletState));
+            writeOffset += sizeof(BulletState);
+            ++activeBullets;
         }
     }
-    header.activeBulletCount = activeCount;
+
+    uint8_t activeEnemies = 0;
+    for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+        if (state.enemies[i].active) {
+            std::memcpy(wireBuffer + writeOffset, &state.enemies[i], sizeof(EnemyState));
+            writeOffset += sizeof(EnemyState);
+            ++activeEnemies;
+        }
+    }
+
+    header.activeBulletCount = activeBullets;
+    header.activeEnemyCount  = activeEnemies;
     std::memcpy(wireBuffer, &header, sizeof(CompactGameStateHeader));
 
-    const size_t packetSize = sizeof(CompactGameStateHeader) +
-                              static_cast<size_t>(activeCount) * sizeof(BulletState);
-
-    ENetPacket* packet = enet_packet_create(wireBuffer, packetSize, ENET_PACKET_FLAG_UNSEQUENCED);
+    ENetPacket* packet = enet_packet_create(wireBuffer, writeOffset, ENET_PACKET_FLAG_UNSEQUENCED);
     enet_host_broadcast(m_host, 0, packet);
     enet_host_flush(m_host);
 }

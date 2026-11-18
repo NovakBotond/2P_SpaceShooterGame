@@ -29,6 +29,7 @@ namespace Constants {
     constexpr uint16_t DEFAULT_PORT      = 7777;
     constexpr int      MAX_PLAYERS       = 2;
     constexpr int      NET_CHANNEL_COUNT = 2;
+    constexpr float    INTRO_DURATION    = 5.0f; // 5-second studio splash screen
 
     // -------------------------------------------------------------------------
     // Ship Physics & Health
@@ -72,13 +73,36 @@ namespace Constants {
     constexpr float POWERUP_MAX_SPAWN_INTERVAL = 6.5f;  // Max seconds between spawns
     constexpr float POWERUP_RADIUS             = 20.0f; // Pickup collider radius (px)
 
-    constexpr float   POWERUP_FIRERATE_DURATION = 10.0f; // +30% fire rate for 10s
-    constexpr float   POWERUP_FIRERATE_MULT     = 1.30f;
-    constexpr float   POWERUP_SPEED_DURATION    = 10.0f; // +30% ship speed for 10s
-    constexpr float   POWERUP_SPEED_MULT        = 1.30f;
-    constexpr uint8_t POWERUP_SHOTGUN_SHOTS     = 3;     // Next 3 shots fire 3 bullets
-    constexpr float   POWERUP_STEALTH_DURATION  = 6.0f;  // Invisible & immortal 6s (no fire)
-    constexpr uint8_t POWERUP_BOUNCY_SHOTS      = 6;     // Next 6 shots bounce off walls (5s)
+    constexpr float   POWERUP_FIRERATE_DURATION    = 10.0f; // +30% fire rate for 10s
+    constexpr float   POWERUP_FIRERATE_MULT        = 1.30f;
+    constexpr float   POWERUP_SPEED_DURATION       = 10.0f; // +30% ship speed for 10s
+    constexpr float   POWERUP_SPEED_MULT           = 1.30f;
+    constexpr uint8_t POWERUP_SHOTGUN_SHOTS        = 3;     // Next 3 shots fire 3 bullets
+    constexpr float   POWERUP_STEALTH_DURATION     = 6.0f;  // Invisible & immortal 6s (no fire)
+    constexpr uint8_t POWERUP_BOUNCY_SHOTS         = 6;     // Next 6 shots bounce off walls (5s)
+    constexpr uint8_t POWERUP_RADIAL_SHOTS         = 1;     // Next shot fires 8 bullets (45 deg)
+    constexpr int32_t POWERUP_SHIELD_HP            = 2;     // Blue bubble absorbs 2 hits
+    constexpr float   POWERUP_SHIELD_COOLDOWN      = 30.0f; // 30s lockout after shield breaks
+    constexpr float   POWERUP_ENEMY_SLOW_DURATION  = 10.0f; // Enemies -30% speed for 10s
+    constexpr float   POWERUP_ENEMY_SLOW_MULT      = 0.70f;
+    constexpr float   POWERUP_ENEMY_FSLOW_DURATION = 10.0f; // Enemies -30% fire rate for 10s
+    constexpr float   POWERUP_ENEMY_FSLOW_MULT     = 0.70f;
+    constexpr float   POWERUP_ENEMY_ALLY_DURATION  = 5.0f;  // Enemy fights as ally for 5s
+
+    // -------------------------------------------------------------------------
+    // Co-op Wave Mode & Enemy Scaling
+    // -------------------------------------------------------------------------
+    constexpr int   MAX_ENEMIES               = 12;     // Max simultaneous active enemies
+    constexpr int   ENEMY_BASE_HP             = 2;      // Base normal enemy HP (+1 every 2nd wave)
+    constexpr float ENEMY_BASE_SPEED          = 145.0f; // Base speed (+10% every 5th wave)
+    constexpr float ENEMY_SPEED_STEP_MULT     = 1.10f;  // +10% per 5th wave
+    constexpr float ENEMY_RADIUS              = 18.0f;  // Normal enemy radius
+    constexpr float ENEMY_BOSS_RADIUS         = 34.0f;  // Boss larger radius
+    constexpr float ENEMY_BASE_FIRE_COOLDOWN  = 1.90f;  // Normal enemy fire interval (sec)
+    constexpr float ENEMY_BULLET_SPEED        = 420.0f; // Enemy projectile speed (px/sec)
+    constexpr float ENEMY_SPAWN_INTERVAL      = 1.35f;  // Staggered edge spawn interval (sec)
+    constexpr float WAVE_CLEAR_DELAY          = 2.5f;   // Pause before next wave begins
+    constexpr int   ALLY_HEAL_SHOTS_REQUIRED  = 2;      // Friend hits needed for +1 HP in Co-op
 
     // -------------------------------------------------------------------------
     // Round Feedback
@@ -86,9 +110,10 @@ namespace Constants {
     constexpr float ROUND_BANNER_DURATION = 2.0f;  // Seconds to show round winner banner
 
     // -------------------------------------------------------------------------
-    // Comets (Randomly flying map hazards - capped to keep gameplay fair)
+    // Comets (Randomly flying map hazards - destructible in 3 shots)
     // -------------------------------------------------------------------------
     constexpr int   MAX_COMETS               = 3;      // Max simultaneous comets
+    constexpr int   COMET_MAX_HP             = 3;      // Disappears after 3 player shots
     constexpr float COMET_MIN_SPAWN_INTERVAL = 3.2f;   // Min seconds between spawns
     constexpr float COMET_MAX_SPAWN_INTERVAL = 5.8f;   // Max seconds between spawns
     constexpr float COMET_MIN_SPEED          = 180.0f; // Min speed (px/sec)
