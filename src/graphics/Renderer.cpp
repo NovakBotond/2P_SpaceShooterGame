@@ -24,6 +24,20 @@ namespace {
     // Arena & UI Accents
     constexpr Color NEON_BORDER     = {  55, 130, 255, 180 };
     constexpr Color HUD_BG_DARK     = {  10,  12,  26, 200 };
+
+    struct ResolutionPreset {
+        int         width;
+        int         height;
+        const char* label;
+    };
+
+    constexpr ResolutionPreset RES_PRESETS[] = {
+        { 1280,  720, "1280x720 (HD)"      },
+        { 1600,  900, "1600x900 (HD+)"     },
+        { 1920, 1080, "1920x1080 (Full HD)" },
+        { 2560, 1440, "2560x1440 (QHD)"    }
+    };
+    constexpr int NUM_RES_PRESETS = static_cast<int>(sizeof(RES_PRESETS) / sizeof(RES_PRESETS[0]));
 }
 
 Renderer::~Renderer() {
@@ -60,7 +74,10 @@ bool Renderer::initialize() {
         return true;
     }
 
-    InitWindow(Constants::ARENA_WIDTH, Constants::ARENA_HEIGHT, "1v1 Neon Space Arena");
+    m_resPresetIndex = 0;
+    m_isFullscreen   = false;
+
+    InitWindow(Constants::DEFAULT_WINDOW_WIDTH, Constants::DEFAULT_WINDOW_HEIGHT, "1v1 Neon Space Arena");
     SetTargetFPS(Constants::TICK_RATE);
     SetExitKey(KEY_NULL); // Let main loop handle ESC for menu/disconnect navigation
 
@@ -106,8 +123,77 @@ void Renderer::shutdown() {
     m_initialized = false;
 }
 
+void Renderer::cycleResolution(int direction) {
+    if (!m_initialized) {
+        return;
+    }
+
+    m_resPresetIndex = (m_resPresetIndex + direction) % NUM_RES_PRESETS;
+    if (m_resPresetIndex < 0) {
+        m_resPresetIndex += NUM_RES_PRESETS;
+    }
+
+    if (m_isFullscreen) {
+        if (IsWindowFullscreen()) {
+            ToggleFullscreen();
+        }
+        m_isFullscreen = false;
+    }
+
+    const ResolutionPreset& preset = RES_PRESETS[m_resPresetIndex];
+    SetWindowSize(preset.width, preset.height);
+
+    const int monitor = GetCurrentMonitor();
+    const int monW = GetMonitorWidth(monitor);
+    const int monH = GetMonitorHeight(monitor);
+    if (monW >= preset.width && monH >= preset.height) {
+        SetWindowPosition((monW - preset.width) / 2, (monH - preset.height) / 2);
+    }
+}
+
+void Renderer::toggleFullscreenMode() {
+    if (!m_initialized) {
+        return;
+    }
+
+    const int monitor = GetCurrentMonitor();
+    if (!m_isFullscreen) {
+        const int monW = GetMonitorWidth(monitor);
+        const int monH = GetMonitorHeight(monitor);
+        SetWindowSize(monW, monH);
+        if (!IsWindowFullscreen()) {
+            ToggleFullscreen();
+        }
+        m_isFullscreen = true;
+    } else {
+        if (IsWindowFullscreen()) {
+            ToggleFullscreen();
+        }
+        m_isFullscreen = false;
+        const ResolutionPreset& preset = RES_PRESETS[m_resPresetIndex];
+        SetWindowSize(preset.width, preset.height);
+        const int monW = GetMonitorWidth(monitor);
+        const int monH = GetMonitorHeight(monitor);
+        if (monW >= preset.width && monH >= preset.height) {
+            SetWindowPosition((monW - preset.width) / 2, (monH - preset.height) / 2);
+        }
+    }
+}
+
+std::string Renderer::getDisplaySettingsLabel() const {
+    if (m_isFullscreen) {
+        return "FULLSCREEN (" + std::to_string(GetScreenWidth()) + "x" + std::to_string(GetScreenHeight()) + ")";
+    }
+    return std::string("WINDOWED - ") + RES_PRESETS[m_resPresetIndex].label;
+}
+
 void Renderer::updateShaderUniforms(float elapsedTime) {
-    const float resolution[2] = {
+    // Background shader renders inside the 1920x1080 offscreen arena target
+    const float arenaRes[2] = {
+        Constants::ARENA_WIDTH_F,
+        Constants::ARENA_HEIGHT_F
+    };
+    const float screenRes[2] = {
         static_cast<float>(GetScreenWidth()),
         static_cast<float>(GetScreenHeight())
     };
@@ -116,14 +202,14 @@ void Renderer::updateShaderUniforms(float elapsedTime) {
         SetShaderValue(m_bgShader, m_bgTimeLoc, &elapsedTime, SHADER_UNIFORM_FLOAT);
     }
     if (m_bgResolutionLoc >= 0) {
-        SetShaderValue(m_bgShader, m_bgResolutionLoc, resolution, SHADER_UNIFORM_VEC2);
+        SetShaderValue(m_bgShader, m_bgResolutionLoc, arenaRes, SHADER_UNIFORM_VEC2);
     }
 
     if (m_postTimeLoc >= 0) {
         SetShaderValue(m_postShader, m_postTimeLoc, &elapsedTime, SHADER_UNIFORM_FLOAT);
     }
     if (m_postResolutionLoc >= 0) {
-        SetShaderValue(m_postShader, m_postResolutionLoc, resolution, SHADER_UNIFORM_VEC2);
+        SetShaderValue(m_postShader, m_postResolutionLoc, screenRes, SHADER_UNIFORM_VEC2);
     }
 }
 
@@ -435,6 +521,12 @@ void Renderer::renderMenu(const std::string& ipInput, const std::string& statusM
     EndTextureMode();
 
     // 2. Composite scene through post-processing bloom/CRT shader & overlay crisp menu text
+    const float screenW = static_cast<float>(GetScreenWidth());
+    const float screenH = static_cast<float>(GetScreenHeight());
+    const float scale   = std::min(screenW / Constants::ARENA_WIDTH_F, screenH / Constants::ARENA_HEIGHT_F);
+    const float offsetX = (screenW - Constants::ARENA_WIDTH_F * scale) * 0.5f;
+    const float offsetY = (screenH - Constants::ARENA_HEIGHT_F * scale) * 0.5f;
+
     BeginDrawing();
     ClearBackground(BLACK);
 
@@ -445,12 +537,25 @@ void Renderer::renderMenu(const std::string& ipInput, const std::string& statusM
         static_cast<float>(m_sceneTarget.texture.width),
         -static_cast<float>(m_sceneTarget.texture.height)
     };
-    DrawTextureRec(m_sceneTarget.texture, srcRect, { 0.0f, 0.0f }, WHITE);
+    const Rectangle dstRect = {
+        offsetX,
+        offsetY,
+        Constants::ARENA_WIDTH_F * scale,
+        Constants::ARENA_HEIGHT_F * scale
+    };
+    DrawTexturePro(m_sceneTarget.texture, srcRect, dstRect, { 0.0f, 0.0f }, 0.0f, WHITE);
     EndShaderMode();
 
+    Camera2D uiCamera{};
+    uiCamera.offset = { offsetX, offsetY };
+    uiCamera.target = { 0.0f, 0.0f };
+    uiCamera.rotation = 0.0f;
+    uiCamera.zoom = scale;
+    BeginMode2D(uiCamera);
+
     // Menu central panel
-    const float panelW = 640.0f;
-    const float panelH = 440.0f;
+    const float panelW = 740.0f;
+    const float panelH = 540.0f;
     const float panelX = (Constants::ARENA_WIDTH_F - panelW) * 0.5f;
     const float panelY = (Constants::ARENA_HEIGHT_F - panelH) * 0.5f;
 
@@ -460,27 +565,27 @@ void Renderer::renderMenu(const std::string& ipInput, const std::string& statusM
     const int centerX = Constants::ARENA_WIDTH / 2;
 
     const char* title = "1V1 NEON SPACE ARENA";
-    const int titleW = MeasureText(title, 40);
-    DrawText(title, centerX - titleW / 2, static_cast<int>(panelY + 32), 40, NEON_CYAN);
+    const int titleW = MeasureText(title, 44);
+    DrawText(title, centerX - titleW / 2, static_cast<int>(panelY + 28), 44, NEON_CYAN);
 
     const char* subtitle = "C++17  |  RAYLIB GLSL 330 SHADERS  |  ENET UDP MULTIPLAYER";
-    const int subW = MeasureText(subtitle, 15);
-    DrawText(subtitle, centerX - subW / 2, static_cast<int>(panelY + 82), 15, NEON_MAGENTA);
+    const int subW = MeasureText(subtitle, 16);
+    DrawText(subtitle, centerX - subW / 2, static_cast<int>(panelY + 80), 16, NEON_MAGENTA);
 
     // Host Option [1]
     const float optX = panelX + 55.0f;
     DrawText("[1]  HOST GAME  (UDP Port 7777 - Player 1 Cyan)",
-             static_cast<int>(optX), static_cast<int>(panelY + 135), 22, NEON_CYAN);
+             static_cast<int>(optX), static_cast<int>(panelY + 130), 24, NEON_CYAN);
 
     // Join Option [2] or [ENTER]
     DrawText("[2] or [ENTER]  JOIN GAME  (Player 2 Magenta)",
-             static_cast<int>(optX), static_cast<int>(panelY + 178), 22, NEON_MAGENTA);
+             static_cast<int>(optX), static_cast<int>(panelY + 172), 24, NEON_MAGENTA);
 
     // Host IP Input Box
     DrawText("TARGET HOST IP (Type IP, Backspace to edit):",
-             static_cast<int>(optX), static_cast<int>(panelY + 225), 16, LIGHTGRAY);
+             static_cast<int>(optX), static_cast<int>(panelY + 218), 17, LIGHTGRAY);
 
-    const Rectangle ipBox = { optX, panelY + 250.0f, panelW - 110.0f, 44.0f };
+    const Rectangle ipBox = { optX, panelY + 244.0f, panelW - 110.0f, 46.0f };
     DrawRectangleRec(ipBox, { 16, 22, 46, 255 });
     DrawRectangleLinesEx(ipBox, 2.0f, NEON_MAGENTA);
 
@@ -488,21 +593,29 @@ void Renderer::renderMenu(const std::string& ipInput, const std::string& statusM
     const std::string displayIp = ipInput + (cursorBlink ? "_" : "");
     DrawText(displayIp.c_str(),
              static_cast<int>(ipBox.x + 16.0f),
-             static_cast<int>(ipBox.y + 10.0f),
+             static_cast<int>(ipBox.y + 11.0f),
              24,
              WHITE);
 
+    // Display & Resolution Selector
+    const std::string dispLabel = "DISPLAY:  " + getDisplaySettingsLabel();
+    DrawText(dispLabel.c_str(),
+             static_cast<int>(optX), static_cast<int>(panelY + 312), 20, NEON_CYAN);
+    DrawText("[R] or [LEFT/RIGHT] Change Resolution   |   [F] or [F11] Toggle Fullscreen",
+             static_cast<int>(optX), static_cast<int>(panelY + 340), 16, LIGHTGRAY);
+
     // Controls Reference
     DrawText("CONTROLS:  [W/A/S/D] or [ARROW KEYS] Thrust & Rotate   |   [SPACE] Fire",
-             static_cast<int>(optX), static_cast<int>(panelY + 325), 15, { 180, 220, 255, 255 });
-    DrawText("RULES:     3 HP per Round   |   Destroy opponent to score & reset round",
-             static_cast<int>(optX), static_cast<int>(panelY + 350), 15, { 180, 220, 255, 255 });
+             static_cast<int>(optX), static_cast<int>(panelY + 388), 16, { 180, 220, 255, 255 });
+    DrawText("ARENA:     1920x1080 Map   |   3 HP per Round   |   [F11] Fullscreen In-Game",
+             static_cast<int>(optX), static_cast<int>(panelY + 414), 16, { 180, 220, 255, 255 });
 
     // Status message line
     const std::string statusLine = "STATUS: " + statusMessage;
     DrawText(statusLine.c_str(),
-             static_cast<int>(optX), static_cast<int>(panelY + 392), 16, YELLOW);
+             static_cast<int>(optX), static_cast<int>(panelY + 475), 17, YELLOW);
 
+    EndMode2D();
     EndDrawing();
 }
 
@@ -517,7 +630,7 @@ void Renderer::renderGame(const GameState& state,
     updateParticles(state, dt);
 
     // -------------------------------------------------------------------------
-    // Pass 1: Render scene into offscreen RenderTexture2D
+    // Pass 1: Render scene into offscreen RenderTexture2D (1920x1080 logical map)
     // -------------------------------------------------------------------------
     BeginTextureMode(m_sceneTarget);
     ClearBackground(BLACK);
@@ -542,8 +655,14 @@ void Renderer::renderGame(const GameState& state,
 
     // -------------------------------------------------------------------------
     // Pass 2: Draw RenderTexture2D through GLSL 330 post-processing bloom/CRT
-    //         shader, then render crisp HUD overlay
+    //         shader scaled to active resolution, then render crisp HUD overlay
     // -------------------------------------------------------------------------
+    const float screenW = static_cast<float>(GetScreenWidth());
+    const float screenH = static_cast<float>(GetScreenHeight());
+    const float scale   = std::min(screenW / Constants::ARENA_WIDTH_F, screenH / Constants::ARENA_HEIGHT_F);
+    const float offsetX = (screenW - Constants::ARENA_WIDTH_F * scale) * 0.5f;
+    const float offsetY = (screenH - Constants::ARENA_HEIGHT_F * scale) * 0.5f;
+
     BeginDrawing();
     ClearBackground(BLACK);
 
@@ -555,10 +674,24 @@ void Renderer::renderGame(const GameState& state,
         static_cast<float>(m_sceneTarget.texture.width),
         -static_cast<float>(m_sceneTarget.texture.height)
     };
-    DrawTextureRec(m_sceneTarget.texture, srcRect, { 0.0f, 0.0f }, WHITE);
+    const Rectangle dstRect = {
+        offsetX,
+        offsetY,
+        Constants::ARENA_WIDTH_F * scale,
+        Constants::ARENA_HEIGHT_F * scale
+    };
+    DrawTexturePro(m_sceneTarget.texture, srcRect, dstRect, { 0.0f, 0.0f }, 0.0f, WHITE);
     EndShaderMode();
+
+    Camera2D uiCamera{};
+    uiCamera.offset = { offsetX, offsetY };
+    uiCamera.target = { 0.0f, 0.0f };
+    uiCamera.rotation = 0.0f;
+    uiCamera.zoom = scale;
+    BeginMode2D(uiCamera);
 
     drawHUD(state, isHost, isConnected, statusMessage, pingMs);
 
+    EndMode2D();
     EndDrawing();
 }

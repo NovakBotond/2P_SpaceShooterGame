@@ -39,6 +39,15 @@ public:
     // Unload shaders, RenderTexture2D, and close Raylib window
     void shutdown();
 
+    // Cycle through available windowed resolutions (direction: +1 or -1)
+    void cycleResolution(int direction = 1);
+
+    // Toggle between Windowed and Fullscreen display modes
+    void toggleFullscreenMode();
+
+    // Human-readable label of current display mode & resolution
+    std::string getDisplaySettingsLabel() const;
+
     // Render the interactive start menu (Host / Join by IP) through the shader pipeline
     void renderMenu(const std::string& ipInput, const std::string& statusMessage);
 
@@ -63,7 +72,9 @@ private:
     void drawBullets(const GameState& state);
     void drawHUD(const GameState& state, bool isHost, bool isConnected, const std::string& statusMessage, uint32_t pingMs);
 
-    bool            m_initialized      = false;
+    bool            m_initialized       = false;
+    int             m_resPresetIndex    = 0;
+    bool            m_isFullscreen      = false;
     RenderTexture2D m_sceneTarget{};
 
     Shader          m_bgShader{};

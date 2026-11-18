@@ -197,6 +197,11 @@ int main(int argc, char* argv[]) {
     while (!WindowShouldClose()) {
         const float dt = std::min(GetFrameTime(), Constants::FIXED_TIMESTEP * 4.0f);
 
+        // Global Fullscreen toggle key [F11] works in both Menu and In-Game
+        if (IsKeyPressed(KEY_F11)) {
+            renderer.toggleFullscreenMode();
+        }
+
         // =====================================================================
         // STATE 1: START MENU (Host / Join via IP)
         // =====================================================================
@@ -227,6 +232,18 @@ int main(int argc, char* argv[]) {
             }
 
             if (!editingIp) {
+                // Display & resolution controls on the start menu
+                if (IsKeyPressed(KEY_F)) {
+                    renderer.toggleFullscreenMode();
+                    menuStatus = "Display changed to " + renderer.getDisplaySettingsLabel();
+                } else if (IsKeyPressed(KEY_R) || IsKeyPressed(KEY_RIGHT)) {
+                    renderer.cycleResolution(1);
+                    menuStatus = "Resolution set to " + renderer.getDisplaySettingsLabel();
+                } else if (IsKeyPressed(KEY_LEFT)) {
+                    renderer.cycleResolution(-1);
+                    menuStatus = "Resolution set to " + renderer.getDisplaySettingsLabel();
+                }
+
                 // Quick-launch hotkeys when not actively typing an IP
                 if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
                     if (network.startHost(Constants::DEFAULT_PORT)) {

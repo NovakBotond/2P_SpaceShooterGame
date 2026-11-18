@@ -11,13 +11,15 @@
 namespace Constants {
 
     // -------------------------------------------------------------------------
-    // Display & Arena Dimensions
+    // Display & Arena Dimensions (Expanded 1920x1080 Logical Arena)
     // -------------------------------------------------------------------------
-    constexpr int   ARENA_WIDTH          = 1280;
-    constexpr int   ARENA_HEIGHT         = 720;
-    constexpr float ARENA_WIDTH_F        = 1280.0f;
-    constexpr float ARENA_HEIGHT_F       = 720.0f;
-    constexpr float ARENA_BORDER_PADDING = 20.0f;
+    constexpr int   ARENA_WIDTH           = 1920;
+    constexpr int   ARENA_HEIGHT          = 1080;
+    constexpr float ARENA_WIDTH_F         = 1920.0f;
+    constexpr float ARENA_HEIGHT_F        = 1080.0f;
+    constexpr int   DEFAULT_WINDOW_WIDTH  = 1280;
+    constexpr int   DEFAULT_WINDOW_HEIGHT = 720;
+    constexpr float ARENA_BORDER_PADDING  = 24.0f;
 
     // -------------------------------------------------------------------------
     // Networking & Simulation Timing
