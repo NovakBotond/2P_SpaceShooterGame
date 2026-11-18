@@ -2,13 +2,14 @@
 // OWNER: Developer B (Networking & Gameplay Logic)
 // FILE:  src/game/Simulation.cpp
 // DESC:  Implementation of server-authoritative 2D physics, projectiles,
-//        circle-based collisions, HP tracking, round reset logic, and shared
-//        client-side prediction helpers.
+//        destructible comets, 13 power-ups, Co-op wave progression & bosses,
+//        ally enemy conversion, co-op teammate healing, and shared prediction.
 // =============================================================================
 
 #include "game/Simulation.hpp"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace {
     constexpr float PI_VAL = 3.14159265358979323846f;
@@ -44,11 +45,44 @@ namespace {
             ship.vy = -std::abs(ship.vy) * Constants::SHIP_BOUNCE_DAMPING;
         }
     }
+
+    void initShipForMatchStart(ShipState& ship, float x, float y, float angle, bool active) {
+        ship = ShipState{};
+        ship.x      = x;
+        ship.y      = y;
+        ship.angle  = angle;
+        ship.hp     = Constants::SHIP_MAX_HP;
+        ship.ammo   = 1.0f;
+        ship.active = active ? 1 : 0;
+    }
+
+    void resetShipPowerUpsForRound(ShipState& ship, float x, float y, float angle) {
+        ship.x                   = x;
+        ship.y                   = y;
+        ship.vx                  = 0.0f;
+        ship.vy                  = 0.0f;
+        ship.angle               = angle;
+        ship.hp                  = Constants::SHIP_MAX_HP;
+        ship.ammo                = 1.0f;
+        ship.overheatSmokeTimer  = 0.0f;
+        ship.fireRateTimer       = 0.0f;
+        ship.speedBoostTimer     = 0.0f;
+        ship.stealthTimer        = 0.0f;
+        ship.shieldCooldownTimer = 0.0f;
+        ship.shieldHp            = 0;
+        ship.shotgunShotsLeft    = 0;
+        ship.bouncyShotsLeft     = 0;
+        ship.radialShotsLeft     = 0;
+        ship.allyHealHits        = 0;
+        ship.ammoOverheated      = 0;
+        ship.isThrusting         = 0;
+        ship.active              = 1;
+    }
 }
 
 Simulation::Simulation()
     : m_rng(std::random_device{}()) {
-    resetMatch();
+    resetMatch(GameMode::PvP);
 }
 
 float Simulation::randomRange(float minVal, float maxVal) {
@@ -56,82 +90,126 @@ float Simulation::randomRange(float minVal, float maxVal) {
     return dist(m_rng);
 }
 
-void Simulation::resetMatch() {
+void Simulation::resetMatch(GameMode mode) {
     m_state = GameState{};
-    m_state.packetType = static_cast<uint8_t>(PacketType::GAME_STATE);
-    m_state.tick = 0;
-    m_state.lastClientTick = 0;
-    m_state.lastRoundWinner = 255;
+    m_state.packetType       = static_cast<uint8_t>(PacketType::GAME_STATE);
+    m_state.tick             = 0;
+    m_state.lastClientTick   = 0;
+    m_state.gameMode         = static_cast<uint8_t>(mode);
+    m_state.currentWave      = 1;
+    m_state.lastRoundWinner  = 255;
     m_state.roundBannerTimer = 0.0f;
+    m_state.bannerCode       = 0;
 
     for (int i = 0; i < Constants::MAX_PLAYERS; ++i) {
         m_state.ships[i].score = 0;
     }
 
-    resetRound();
+    m_contactCooldowns[0] = 0.0f;
+    m_contactCooldowns[1] = 0.0f;
+
+    if (mode == GameMode::CoopWaves) {
+        initShipForMatchStart(m_state.ships[0], Constants::ARENA_WIDTH_F * 0.35f, Constants::ARENA_HEIGHT_F * 0.50f, 0.0f, true);
+        initShipForMatchStart(m_state.ships[1], Constants::ARENA_WIDTH_F * 0.65f, Constants::ARENA_HEIGHT_F * 0.50f, PI_VAL, m_coopP2Present);
+
+        for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
+            m_state.bullets[i] = BulletState{};
+        }
+        for (int i = 0; i < Constants::MAX_COMETS; ++i) {
+            m_state.comets[i] = CometState{};
+        }
+        for (int i = 0; i < Constants::MAX_MAP_POWERUPS; ++i) {
+            m_state.powerUps[i] = PowerUpState{};
+        }
+        for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+            m_state.enemies[i] = EnemyState{};
+            m_enemyFireCooldowns[i] = 0.0f;
+        }
+
+        m_fireCooldowns[0]  = 0.0f;
+        m_fireCooldowns[1]  = 0.0f;
+        m_cometSpawnTimer   = randomRange(Constants::COMET_MIN_SPAWN_INTERVAL, Constants::COMET_MAX_SPAWN_INTERVAL);
+        m_powerUpSpawnTimer = randomRange(Constants::POWERUP_MIN_SPAWN_INTERVAL, Constants::POWERUP_MAX_SPAWN_INTERVAL);
+        m_waveClearPending  = false;
+        m_waveClearTimer    = 0.0f;
+        startWave(1);
+    } else {
+        resetRound();
+    }
 }
 
 void Simulation::resetRound() {
-    // Player 0 (Host - Electric Cyan): Spawn on left side facing right
-    ShipState& p0 = m_state.ships[0];
-    p0.x                  = Constants::ARENA_WIDTH_F * 0.20f;
-    p0.y                  = Constants::ARENA_HEIGHT_F * 0.50f;
-    p0.vx                 = 0.0f;
-    p0.vy                 = 0.0f;
-    p0.angle              = 0.0f;
-    p0.hp                 = Constants::SHIP_MAX_HP;
-    p0.ammo               = 1.0f;
-    p0.overheatSmokeTimer = 0.0f;
-    p0.fireRateTimer      = 0.0f;
-    p0.speedBoostTimer    = 0.0f;
-    p0.stealthTimer       = 0.0f;
-    p0.shotgunShotsLeft   = 0;
-    p0.bouncyShotsLeft    = 0;
-    p0.ammoOverheated     = 0;
-    p0.isThrusting        = 0;
-    p0.active             = 1;
+    resetShipPowerUpsForRound(m_state.ships[0], Constants::ARENA_WIDTH_F * 0.20f, Constants::ARENA_HEIGHT_F * 0.50f, 0.0f);
+    resetShipPowerUpsForRound(m_state.ships[1], Constants::ARENA_WIDTH_F * 0.80f, Constants::ARENA_HEIGHT_F * 0.50f, PI_VAL);
 
-    // Player 1 (Client - Neon Magenta): Spawn on right side facing left
-    ShipState& p1 = m_state.ships[1];
-    p1.x                  = Constants::ARENA_WIDTH_F * 0.80f;
-    p1.y                  = Constants::ARENA_HEIGHT_F * 0.50f;
-    p1.vx                 = 0.0f;
-    p1.vy                 = 0.0f;
-    p1.angle              = PI_VAL;
-    p1.hp                 = Constants::SHIP_MAX_HP;
-    p1.ammo               = 1.0f;
-    p1.overheatSmokeTimer = 0.0f;
-    p1.fireRateTimer      = 0.0f;
-    p1.speedBoostTimer    = 0.0f;
-    p1.stealthTimer       = 0.0f;
-    p1.shotgunShotsLeft   = 0;
-    p1.bouncyShotsLeft    = 0;
-    p1.ammoOverheated     = 0;
-    p1.isThrusting        = 0;
-    p1.active             = 1;
-
-    // Clear all active projectiles
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         m_state.bullets[i] = BulletState{};
-        m_state.bullets[i].active = 0;
     }
-
-    // Clear all active comets on round reset
     for (int i = 0; i < Constants::MAX_COMETS; ++i) {
         m_state.comets[i] = CometState{};
-        m_state.comets[i].active = 0;
     }
-
-    // Clear all map power-ups on round reset
     for (int i = 0; i < Constants::MAX_MAP_POWERUPS; ++i) {
         m_state.powerUps[i] = PowerUpState{};
-        m_state.powerUps[i].active = 0;
+    }
+    for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+        m_state.enemies[i] = EnemyState{};
+        m_enemyFireCooldowns[i] = 0.0f;
     }
 
-    m_fireCooldowns[0]  = 0.0f;
-    m_fireCooldowns[1]  = 0.0f;
-    m_cometSpawnTimer   = randomRange(Constants::COMET_MIN_SPAWN_INTERVAL, Constants::COMET_MAX_SPAWN_INTERVAL);
-    m_powerUpSpawnTimer = randomRange(Constants::POWERUP_MIN_SPAWN_INTERVAL, Constants::POWERUP_MAX_SPAWN_INTERVAL);
+    m_fireCooldowns[0]    = 0.0f;
+    m_fireCooldowns[1]    = 0.0f;
+    m_contactCooldowns[0] = 0.0f;
+    m_contactCooldowns[1] = 0.0f;
+    m_cometSpawnTimer     = randomRange(Constants::COMET_MIN_SPAWN_INTERVAL, Constants::COMET_MAX_SPAWN_INTERVAL);
+    m_powerUpSpawnTimer   = randomRange(Constants::POWERUP_MIN_SPAWN_INTERVAL, Constants::POWERUP_MAX_SPAWN_INTERVAL);
+}
+
+void Simulation::setCoopPlayer2Present(bool present) {
+    const bool wasPresent = m_coopP2Present;
+    m_coopP2Present = present;
+
+    if (m_state.gameMode != static_cast<uint8_t>(GameMode::CoopWaves)) {
+        return;
+    }
+
+    if (present && !wasPresent) {
+        resetShipPowerUpsForRound(m_state.ships[1], Constants::ARENA_WIDTH_F * 0.65f, Constants::ARENA_HEIGHT_F * 0.50f, PI_VAL);
+    } else if (!present && wasPresent) {
+        m_state.ships[1].active = 0;
+    }
+}
+
+void Simulation::startWave(uint16_t waveNumber) {
+    m_state.currentWave        = waveNumber;
+    m_state.bossActive         = 0;
+    m_state.enemySlowTimer     = 0.0f;
+    m_state.enemyFireSlowTimer = 0.0f;
+    m_state.bannerCode         = 1;
+    m_state.roundBannerTimer   = 2.2f;
+
+    // Revive downed teammates between waves in Co-op
+    if (!m_state.ships[0].active) {
+        resetShipPowerUpsForRound(m_state.ships[0], Constants::ARENA_WIDTH_F * 0.35f, Constants::ARENA_HEIGHT_F * 0.50f, 0.0f);
+    }
+    if (m_coopP2Present && !m_state.ships[1].active) {
+        resetShipPowerUpsForRound(m_state.ships[1], Constants::ARENA_WIDTH_F * 0.65f, Constants::ARENA_HEIGHT_F * 0.50f, PI_VAL);
+    }
+
+    for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+        m_state.enemies[i] = EnemyState{};
+        m_enemyFireCooldowns[i] = 0.0f;
+    }
+
+    const int normalEnemiesTotal = 5 + (static_cast<int>(waveNumber) - 1) * 2;
+    m_waveNormalToSpawn          = normalEnemiesTotal;
+    m_state.waveRemainingKills   = static_cast<uint16_t>(normalEnemiesTotal + 1); // +1 for wave Boss
+
+    std::uniform_int_distribution<int> triggerDist(2, 3);
+    m_bossTriggerRemaining = triggerDist(m_rng);
+    m_bossSpawnedThisWave  = false;
+    m_waveClearPending     = false;
+    m_waveClearTimer       = 0.0f;
+    m_enemySpawnTimer      = 0.75f;
 }
 
 float Simulation::shortestAngleDiff(float from, float to) {
@@ -189,6 +267,21 @@ GameState Simulation::interpolateState(const GameState& prev, const GameState& c
         }
     }
 
+    for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+        const EnemyState& p = prev.enemies[i];
+        const EnemyState& c = curr.enemies[i];
+        if (!p.active || !c.active || p.isBoss != c.isBoss) {
+            continue;
+        }
+        const float dx = c.x - p.x;
+        const float dy = c.y - p.y;
+        if (dx * dx + dy * dy < 80.0f * 80.0f) {
+            out.enemies[i].x     = p.x + dx * t;
+            out.enemies[i].y     = p.y + dy * t;
+            out.enemies[i].angle = p.angle + shortestAngleDiff(p.angle, c.angle) * t;
+        }
+    }
+
     return out;
 }
 
@@ -205,6 +298,9 @@ void Simulation::stepShipPhysics(ShipState& ship, const InputPacket& input, floa
     }
     if (ship.stealthTimer > 0.0f) {
         ship.stealthTimer = std::max(0.0f, ship.stealthTimer - dt);
+    }
+    if (ship.shieldCooldownTimer > 0.0f) {
+        ship.shieldCooldownTimer = std::max(0.0f, ship.shieldCooldownTimer - dt);
     }
 
     const float speedMult = (ship.speedBoostTimer > 0.0f) ? Constants::POWERUP_SPEED_MULT : 1.0f;
@@ -286,6 +382,12 @@ void Simulation::extrapolateVisuals(GameState& state,
     if (state.roundBannerTimer > 0.0f) {
         state.roundBannerTimer = std::max(0.0f, state.roundBannerTimer - dt);
     }
+    if (state.enemySlowTimer > 0.0f) {
+        state.enemySlowTimer = std::max(0.0f, state.enemySlowTimer - dt);
+    }
+    if (state.enemyFireSlowTimer > 0.0f) {
+        state.enemyFireSlowTimer = std::max(0.0f, state.enemyFireSlowTimer - dt);
+    }
 
     if (extrapolateHostShip && state.ships[0].active) {
         ShipState& hostShip = state.ships[0];
@@ -360,6 +462,18 @@ void Simulation::extrapolateVisuals(GameState& state,
                 c.active = 0;
             }
         }
+
+        for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+            EnemyState& e = state.enemies[i];
+            if (!e.active) {
+                continue;
+            }
+            e.x += e.vx * dt;
+            e.y += e.vy * dt;
+            if (e.allyTimer > 0.0f) {
+                e.allyTimer = std::max(0.0f, e.allyTimer - dt);
+            }
+        }
     }
 }
 
@@ -371,6 +485,12 @@ void Simulation::update(float dt, const InputPacket& hostInput, const InputPacke
 
     if (m_state.roundBannerTimer > 0.0f) {
         m_state.roundBannerTimer = std::max(0.0f, m_state.roundBannerTimer - dt);
+    }
+
+    for (int i = 0; i < Constants::MAX_PLAYERS; ++i) {
+        if (m_contactCooldowns[i] > 0.0f) {
+            m_contactCooldowns[i] = std::max(0.0f, m_contactCooldowns[i] - dt);
+        }
     }
 
     // 1. Update both players' ships
@@ -386,7 +506,12 @@ void Simulation::update(float dt, const InputPacket& hostInput, const InputPacke
     // 4. Spawn & advance random map power-ups (max 2, 6s lifetime)
     updatePowerUps(dt);
 
-    // 5. Perform circle-based collision detection & round-end evaluation
+    // 5. Co-op wave enemies & bosses
+    if (m_state.gameMode == static_cast<uint8_t>(GameMode::CoopWaves)) {
+        updateEnemies(dt);
+    }
+
+    // 6. Perform circle-based collision detection & round/wave evaluation
     resolveCollisions();
 }
 
@@ -412,18 +537,27 @@ void Simulation::updateShip(int playerId, const InputPacket& input, float dt) {
 
     // Weapon firing (Spacebar) — blocked while Stealth/Immortal or Overheated
     if (input.shoot && m_fireCooldowns[playerId] <= 0.0f && canFire) {
-        const bool isBouncy = (ship.bouncyShotsLeft > 0);
-        if (isBouncy) {
-            ship.bouncyShotsLeft -= 1;
-        }
-
-        if (ship.shotgunShotsLeft > 0) {
-            ship.shotgunShotsLeft -= 1;
-            spawnBullet(playerId, ship, -Constants::SHOTGUN_SPREAD_ANGLE, isBouncy);
-            spawnBullet(playerId, ship,  0.0f,                            isBouncy);
-            spawnBullet(playerId, ship,  Constants::SHOTGUN_SPREAD_ANGLE, isBouncy);
+        if (ship.radialShotsLeft > 0) {
+            // Radial 360-deg burst: 8 bullets spaced every 45 degrees, all bounce for 5s
+            ship.radialShotsLeft -= 1;
+            constexpr float step45 = PI_VAL * 0.25f;
+            for (int k = 0; k < 8; ++k) {
+                spawnBullet(playerId, ship, static_cast<float>(k) * step45 - ship.angle, true, true);
+            }
         } else {
-            spawnBullet(playerId, ship, 0.0f, isBouncy);
+            const bool isBouncy = (ship.bouncyShotsLeft > 0);
+            if (isBouncy) {
+                ship.bouncyShotsLeft -= 1;
+            }
+
+            if (ship.shotgunShotsLeft > 0) {
+                ship.shotgunShotsLeft -= 1;
+                spawnBullet(playerId, ship, -Constants::SHOTGUN_SPREAD_ANGLE, isBouncy);
+                spawnBullet(playerId, ship,  0.0f,                            isBouncy);
+                spawnBullet(playerId, ship,  Constants::SHOTGUN_SPREAD_ANGLE, isBouncy);
+            } else {
+                spawnBullet(playerId, ship, 0.0f, isBouncy);
+            }
         }
 
         const float baseCooldown = Constants::SHIP_FIRE_COOLDOWN;
@@ -433,7 +567,11 @@ void Simulation::updateShip(int playerId, const InputPacket& input, float dt) {
     }
 }
 
-void Simulation::spawnBullet(int playerId, const ShipState& ship, float angleOffset, bool bouncy) {
+void Simulation::spawnBullet(int playerId,
+                             const ShipState& ship,
+                             float angleOffset,
+                             bool bouncy,
+                             bool ignoreShipVel) {
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         BulletState& bullet = m_state.bullets[i];
         if (!bullet.active) {
@@ -444,11 +582,33 @@ void Simulation::spawnBullet(int playerId, const ShipState& ship, float angleOff
 
             bullet.x              = ship.x + dirX * spawnDist;
             bullet.y              = ship.y + dirY * spawnDist;
-            bullet.vx             = dirX * Constants::BULLET_SPEED + ship.vx * 0.25f;
-            bullet.vy             = dirY * Constants::BULLET_SPEED + ship.vy * 0.25f;
+            bullet.vx             = dirX * Constants::BULLET_SPEED + (ignoreShipVel ? 0.0f : ship.vx * 0.25f);
+            bullet.vy             = dirY * Constants::BULLET_SPEED + (ignoreShipVel ? 0.0f : ship.vy * 0.25f);
             bullet.lifetime       = bouncy ? Constants::BOUNCY_BULLET_LIFETIME : Constants::BULLET_LIFETIME;
             bullet.ownerId        = static_cast<uint8_t>(playerId);
             bullet.bouncesOnWalls = bouncy ? 1 : 0;
+            bullet.active         = 1;
+            return;
+        }
+    }
+}
+
+void Simulation::spawnEnemyBullet(const EnemyState& enemy, float aimAngle, uint8_t ownerId) {
+    for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
+        BulletState& bullet = m_state.bullets[i];
+        if (!bullet.active) {
+            const float dirX = std::cos(aimAngle);
+            const float dirY = std::sin(aimAngle);
+            const float radius = enemy.isBoss ? Constants::ENEMY_BOSS_RADIUS : Constants::ENEMY_RADIUS;
+            const float spawnDist = radius + Constants::BULLET_RADIUS + 6.0f;
+
+            bullet.x              = enemy.x + dirX * spawnDist;
+            bullet.y              = enemy.y + dirY * spawnDist;
+            bullet.vx             = dirX * Constants::ENEMY_BULLET_SPEED;
+            bullet.vy             = dirY * Constants::ENEMY_BULLET_SPEED;
+            bullet.lifetime       = 3.0f;
+            bullet.ownerId        = ownerId; // 2 = Hostile Enemy, 3 = Ally Enemy
+            bullet.bouncesOnWalls = 0;
             bullet.active         = 1;
             return;
         }
@@ -477,7 +637,6 @@ void Simulation::updateBullets(float dt) {
         }
 
         if (bullet.bouncesOnWalls) {
-            // Power-up #5: Bounce off arena perimeter walls until 5s decay
             if (bullet.x - Constants::BULLET_RADIUS < minX) {
                 bullet.x = minX + Constants::BULLET_RADIUS;
                 bullet.vx = std::abs(bullet.vx);
@@ -518,7 +677,6 @@ void Simulation::spawnComet() {
     const float minY = pad;
     const float maxY = Constants::ARENA_HEIGHT_F - pad;
 
-    // Pick a random edge (0=Top, 1=Bottom, 2=Left, 3=Right) to enter from
     std::uniform_int_distribution<int> edgeDist(0, 3);
     const int edge = edgeDist(m_rng);
 
@@ -531,7 +689,6 @@ void Simulation::spawnComet() {
         default: startX = maxX; startY = randomRange(minY, maxY); break;
     }
 
-    // Ensure comet doesn't spawn directly on top of a player ship
     for (int p = 0; p < Constants::MAX_PLAYERS; ++p) {
         const ShipState& ship = m_state.ships[p];
         if (ship.active && checkCircleOverlap(startX, startY, Constants::COMET_RADIUS + 110.0f,
@@ -540,7 +697,6 @@ void Simulation::spawnComet() {
         }
     }
 
-    // Aim across the interior of the arena with a random trajectory vector & speed
     const float targetX = randomRange(Constants::ARENA_WIDTH_F * 0.22f, Constants::ARENA_WIDTH_F * 0.78f);
     const float targetY = randomRange(Constants::ARENA_HEIGHT_F * 0.22f, Constants::ARENA_HEIGHT_F * 0.78f);
     float dx = targetX - startX;
@@ -563,6 +719,7 @@ void Simulation::spawnComet() {
     comet.radius   = Constants::COMET_RADIUS;
     comet.lifetime = life;
     comet.maxLife  = life;
+    comet.hp       = Constants::COMET_MAX_HP;
     comet.active   = 1;
 }
 
@@ -612,7 +769,6 @@ void Simulation::spawnPowerUp() {
     const float spawnX = randomRange(margin, Constants::ARENA_WIDTH_F - margin);
     const float spawnY = randomRange(margin, Constants::ARENA_HEIGHT_F - margin);
 
-    // Avoid spawning directly on top of a ship
     for (int p = 0; p < Constants::MAX_PLAYERS; ++p) {
         const ShipState& ship = m_state.ships[p];
         if (ship.active && checkCircleOverlap(spawnX, spawnY, Constants::POWERUP_RADIUS + 85.0f,
@@ -621,13 +777,14 @@ void Simulation::spawnPowerUp() {
         }
     }
 
-    std::uniform_int_distribution<int> typeDist(1, 7);
+    const int maxTypeId = (m_state.gameMode == static_cast<uint8_t>(GameMode::CoopWaves)) ? 13 : 9;
+    std::uniform_int_distribution<int> typeDist(1, maxTypeId);
     const uint8_t randomType = static_cast<uint8_t>(typeDist(m_rng));
 
     PowerUpState& pu = m_state.powerUps[slot];
     pu.x        = spawnX;
     pu.y        = spawnY;
-    pu.lifetime = Constants::POWERUP_MAP_LIFETIME; // Stays on map for 6 seconds
+    pu.lifetime = Constants::POWERUP_MAP_LIFETIME;
     pu.type     = randomType;
     pu.active   = 1;
 }
@@ -651,6 +808,281 @@ void Simulation::updatePowerUps(float dt) {
     }
 }
 
+void Simulation::spawnEnemy(bool asBoss) {
+    int slot = -1;
+    for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+        if (!m_state.enemies[i].active) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        return;
+    }
+
+    const float radius = asBoss ? Constants::ENEMY_BOSS_RADIUS : Constants::ENEMY_RADIUS;
+    const float pad = Constants::ARENA_BORDER_PADDING + radius + 6.0f;
+
+    std::uniform_int_distribution<int> edgeDist(0, 3);
+    const int edge = edgeDist(m_rng);
+
+    float startX = 0.0f;
+    float startY = 0.0f;
+    switch (edge) {
+        case 0: startX = randomRange(pad, Constants::ARENA_WIDTH_F - pad); startY = pad; break;
+        case 1: startX = randomRange(pad, Constants::ARENA_WIDTH_F - pad); startY = Constants::ARENA_HEIGHT_F - pad; break;
+        case 2: startX = pad; startY = randomRange(pad, Constants::ARENA_HEIGHT_F - pad); break;
+        default: startX = Constants::ARENA_WIDTH_F - pad; startY = randomRange(pad, Constants::ARENA_HEIGHT_F - pad); break;
+    }
+
+    const int normalHp = Constants::ENEMY_BASE_HP + (static_cast<int>(m_state.currentWave) - 1) / 2;
+    const int hp = asBoss ? (normalHp * 2) : normalHp;
+
+    EnemyState& enemy = m_state.enemies[slot];
+    enemy.x         = startX;
+    enemy.y         = startY;
+    enemy.vx        = 0.0f;
+    enemy.vy        = 0.0f;
+    enemy.angle     = std::atan2(Constants::ARENA_HEIGHT_F * 0.5f - startY,
+                                 Constants::ARENA_WIDTH_F * 0.5f - startX);
+    enemy.allyTimer = 0.0f;
+    enemy.hp        = static_cast<int16_t>(hp);
+    enemy.maxHp     = static_cast<int16_t>(hp);
+    enemy.isBoss    = asBoss ? 1 : 0;
+    enemy.active    = 1;
+
+    m_enemyFireCooldowns[slot] = randomRange(0.7f, 1.5f);
+}
+
+void Simulation::updateEnemies(float dt) {
+    if (m_state.enemySlowTimer > 0.0f) {
+        m_state.enemySlowTimer = std::max(0.0f, m_state.enemySlowTimer - dt);
+    }
+    if (m_state.enemyFireSlowTimer > 0.0f) {
+        m_state.enemyFireSlowTimer = std::max(0.0f, m_state.enemyFireSlowTimer - dt);
+    }
+
+    if (m_waveClearPending) {
+        m_waveClearTimer -= dt;
+        if (m_waveClearTimer <= 0.0f) {
+            m_waveClearPending = false;
+            startWave(m_state.currentWave + 1);
+        }
+        return;
+    }
+
+    int activeNormal = 0;
+    int activeTotal  = 0;
+    for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+        if (m_state.enemies[i].active) {
+            ++activeTotal;
+            if (!m_state.enemies[i].isBoss) {
+                ++activeNormal;
+            }
+        }
+    }
+
+    // Stagger normal enemy spawns from edges (capped at concurrent limit)
+    const int maxConcurrent = std::min(Constants::MAX_ENEMIES - 1, 4 + static_cast<int>(m_state.currentWave));
+    if (m_waveNormalToSpawn > 0) {
+        m_enemySpawnTimer -= dt;
+        if (m_enemySpawnTimer <= 0.0f && activeTotal < maxConcurrent) {
+            spawnEnemy(false);
+            --m_waveNormalToSpawn;
+            m_enemySpawnTimer = std::max(0.45f, Constants::ENEMY_SPAWN_INTERVAL - 0.04f * m_state.currentWave);
+            ++activeNormal;
+            ++activeTotal;
+        }
+    }
+
+    // Boss spawns at the end of every wave when 2 to 3 enemies remain
+    if (!m_bossSpawnedThisWave && m_waveNormalToSpawn == 0 && activeNormal <= m_bossTriggerRemaining) {
+        spawnEnemy(true);
+        m_bossSpawnedThisWave    = true;
+        m_state.bossActive       = 1;
+        m_state.bannerCode       = 2;
+        m_state.roundBannerTimer = 2.4f;
+        ++activeTotal;
+    }
+
+    // Check wave completion
+    if (m_waveNormalToSpawn == 0 && m_bossSpawnedThisWave && activeTotal == 0) {
+        m_waveClearPending       = true;
+        m_waveClearTimer         = Constants::WAVE_CLEAR_DELAY;
+        m_state.bannerCode       = 3;
+        m_state.roundBannerTimer = Constants::WAVE_CLEAR_DELAY;
+        return;
+    }
+
+    // Update enemy AI movement & firing
+    const int speedTier = static_cast<int>(m_state.currentWave) / 5;
+    float baseSpeed = Constants::ENEMY_BASE_SPEED *
+                      std::pow(Constants::ENEMY_SPEED_STEP_MULT, static_cast<float>(speedTier));
+    if (m_state.enemySlowTimer > 0.0f) {
+        baseSpeed *= Constants::POWERUP_ENEMY_SLOW_MULT; // -30% enemy speed power-up
+    }
+
+    const float pad = Constants::ARENA_BORDER_PADDING;
+
+    for (int i = 0; i < Constants::MAX_ENEMIES; ++i) {
+        EnemyState& enemy = m_state.enemies[i];
+        if (!enemy.active) {
+            continue;
+        }
+
+        if (m_enemyFireCooldowns[i] > 0.0f) {
+            m_enemyFireCooldowns[i] = std::max(0.0f, m_enemyFireCooldowns[i] - dt);
+        }
+
+        const bool isAlly = (enemy.allyTimer > 0.0f);
+        if (isAlly) {
+            enemy.allyTimer = std::max(0.0f, enemy.allyTimer - dt);
+        }
+
+        // Find target position
+        bool hasTarget = false;
+        float targetX = Constants::ARENA_WIDTH_F * 0.5f;
+        float targetY = Constants::ARENA_HEIGHT_F * 0.5f;
+        float bestDistSq = 1e12f;
+
+        if (isAlly) {
+            // Mind-controlled ally targets nearest hostile enemy
+            for (int j = 0; j < Constants::MAX_ENEMIES; ++j) {
+                if (j == i || !m_state.enemies[j].active || m_state.enemies[j].allyTimer > 0.0f) {
+                    continue;
+                }
+                const float dx = m_state.enemies[j].x - enemy.x;
+                const float dy = m_state.enemies[j].y - enemy.y;
+                const float d2 = dx * dx + dy * dy;
+                if (d2 < bestDistSq) {
+                    bestDistSq = d2;
+                    targetX = m_state.enemies[j].x;
+                    targetY = m_state.enemies[j].y;
+                    hasTarget = true;
+                }
+            }
+        } else {
+            // Hostile enemy targets nearest visible alive player
+            for (int p = 0; p < Constants::MAX_PLAYERS; ++p) {
+                const ShipState& ship = m_state.ships[p];
+                if (!ship.active || ship.stealthTimer > 0.0f) {
+                    continue;
+                }
+                const float dx = ship.x - enemy.x;
+                const float dy = ship.y - enemy.y;
+                const float d2 = dx * dx + dy * dy;
+                if (d2 < bestDistSq) {
+                    bestDistSq = d2;
+                    targetX = ship.x;
+                    targetY = ship.y;
+                    hasTarget = true;
+                }
+            }
+        }
+
+        const float desiredAngle = hasTarget
+            ? std::atan2(targetY - enemy.y, targetX - enemy.x)
+            : enemy.angle;
+
+        const float diff = shortestAngleDiff(enemy.angle, desiredAngle);
+        const float maxTurn = 3.2f * dt;
+        enemy.angle += std::clamp(diff, -maxTurn, maxTurn);
+
+        const float dist = std::sqrt(std::max(bestDistSq, 1.0f));
+        const float preferredDist = enemy.isBoss ? 320.0f : 240.0f;
+
+        float desiredVx = std::cos(enemy.angle) * baseSpeed;
+        float desiredVy = std::sin(enemy.angle) * baseSpeed;
+        if (hasTarget && dist < preferredDist) {
+            // Orbit around preferred combat range instead of crashing straight into target
+            desiredVx = -std::sin(enemy.angle) * (baseSpeed * 0.75f);
+            desiredVy =  std::cos(enemy.angle) * (baseSpeed * 0.75f);
+        }
+
+        // Soft separation from sibling enemies so they don't stack on top of one another
+        for (int j = 0; j < Constants::MAX_ENEMIES; ++j) {
+            if (j == i || !m_state.enemies[j].active) {
+                continue;
+            }
+            const float sx = enemy.x - m_state.enemies[j].x;
+            const float sy = enemy.y - m_state.enemies[j].y;
+            const float d2 = sx * sx + sy * sy;
+            if (d2 > 0.1f && d2 < 75.0f * 75.0f) {
+                const float invD = 1.0f / std::sqrt(d2);
+                desiredVx += sx * invD * 95.0f;
+                desiredVy += sy * invD * 95.0f;
+            }
+        }
+
+        const float blend = std::min(1.0f, dt * 4.0f);
+        enemy.vx += (desiredVx - enemy.vx) * blend;
+        enemy.vy += (desiredVy - enemy.vy) * blend;
+
+        enemy.x += enemy.vx * dt;
+        enemy.y += enemy.vy * dt;
+
+        const float r = enemy.isBoss ? Constants::ENEMY_BOSS_RADIUS : Constants::ENEMY_RADIUS;
+        enemy.x = std::clamp(enemy.x, pad + r, Constants::ARENA_WIDTH_F - pad - r);
+        enemy.y = std::clamp(enemy.y, pad + r, Constants::ARENA_HEIGHT_F - pad - r);
+
+        // Fire when aligned with a valid target
+        if (hasTarget && std::abs(diff) < 0.35f && m_enemyFireCooldowns[i] <= 0.0f) {
+            spawnEnemyBullet(enemy, enemy.angle, isAlly ? 3 : 2);
+
+            float cd = Constants::ENEMY_BASE_FIRE_COOLDOWN * (enemy.isBoss ? 0.50f : 1.0f);
+            if (!isAlly && m_state.enemyFireSlowTimer > 0.0f) {
+                cd /= Constants::POWERUP_ENEMY_FSLOW_MULT; // -30% enemy fire rate
+            }
+            m_enemyFireCooldowns[i] = cd;
+        }
+    }
+}
+
+bool Simulation::applyDamageToShip(int targetId, float knockVx, float knockVy) {
+    ShipState& targetShip = m_state.ships[targetId];
+    if (!targetShip.active || targetShip.stealthTimer > 0.0f) {
+        return false;
+    }
+
+    targetShip.vx += knockVx;
+    targetShip.vy += knockVy;
+
+    // Blue bubble shield absorbs up to 2 hits before breaking + starting 30s lockout
+    if (targetShip.shieldHp > 0) {
+        targetShip.shieldHp -= 1;
+        if (targetShip.shieldHp <= 0) {
+            targetShip.shieldHp = 0;
+            targetShip.shieldCooldownTimer = Constants::POWERUP_SHIELD_COOLDOWN;
+        }
+        return false;
+    }
+
+    targetShip.hp -= 1;
+    return (targetShip.hp <= 0);
+}
+
+void Simulation::handlePlayerDefeat(int defeatedPlayerId) {
+    if (m_state.gameMode == static_cast<uint8_t>(GameMode::PvP)) {
+        const int winnerId = (defeatedPlayerId == 0) ? 1 : 0;
+        m_state.ships[winnerId].score += 1;
+        m_state.lastRoundWinner        = static_cast<uint8_t>(winnerId);
+        m_state.bannerCode             = 0;
+        m_state.roundBannerTimer       = Constants::ROUND_BANNER_DURATION;
+        resetRound();
+        return;
+    }
+
+    // Co-op Waves mode: player goes down; if all players are down, restart Wave 1
+    m_state.ships[defeatedPlayerId].hp     = 0;
+    m_state.ships[defeatedPlayerId].active = 0;
+
+    if (!m_state.ships[0].active && !m_state.ships[1].active) {
+        resetMatch(GameMode::CoopWaves);
+        m_state.bannerCode       = 4;
+        m_state.roundBannerTimer = 2.6f;
+    }
+}
+
 void Simulation::resolveCollisions() {
     ShipState& s0 = m_state.ships[0];
     ShipState& s1 = m_state.ships[1];
@@ -671,13 +1103,11 @@ void Simulation::resolveCollisions() {
         const float ny = dy / dist;
         const float overlap = (Constants::SHIP_RADIUS * 2.0f) - dist;
 
-        // Separate overlapping ships equally
         s0.x -= nx * (overlap * 0.5f);
         s0.y -= ny * (overlap * 0.5f);
         s1.x += nx * (overlap * 0.5f);
         s1.y += ny * (overlap * 0.5f);
 
-        // Apply elastic separation impulse along collision normal
         const float rvx = s1.vx - s0.vx;
         const float rvy = s1.vy - s0.vy;
         const float velAlongNormal = rvx * nx + rvy * ny;
@@ -703,64 +1133,130 @@ void Simulation::resolveCollisions() {
                 continue;
             }
 
-            if (checkCircleOverlap(pu.x, pu.y, Constants::POWERUP_RADIUS,
-                                   ship.x, ship.y, Constants::SHIP_RADIUS)) {
-                pu.active = 0;
-
-                switch (static_cast<PowerUpType>(pu.type)) {
-                    case PowerUpType::FireRateBoost:
-                        ship.fireRateTimer = Constants::POWERUP_FIRERATE_DURATION;
-                        break;
-                    case PowerUpType::SpeedBoost:
-                        ship.speedBoostTimer = Constants::POWERUP_SPEED_DURATION;
-                        break;
-                    case PowerUpType::Shotgun:
-                        ship.shotgunShotsLeft = Constants::POWERUP_SHOTGUN_SHOTS;
-                        break;
-                    case PowerUpType::StealthImmortal:
-                        ship.stealthTimer = Constants::POWERUP_STEALTH_DURATION;
-                        break;
-                    case PowerUpType::BouncyBullets:
-                        ship.bouncyShotsLeft = Constants::POWERUP_BOUNCY_SHOTS;
-                        break;
-                    case PowerUpType::ExtraLife:
-                        if (ship.hp < Constants::SHIP_MAX_HP) {
-                            ship.hp += 1;
-                        }
-                        break;
-                    case PowerUpType::FullAmmo:
-                        ship.ammo               = 1.0f;
-                        ship.ammoOverheated     = 0;
-                        ship.overheatSmokeTimer = 0.0f;
-                        break;
-                    default:
-                        break;
-                }
-                break;
+            if (!checkCircleOverlap(pu.x, pu.y, Constants::POWERUP_RADIUS,
+                                    ship.x, ship.y, Constants::SHIP_RADIUS)) {
+                continue;
             }
+
+            const PowerUpType pType = static_cast<PowerUpType>(pu.type);
+
+            // Shield lockout rule: cannot pick up for 30s after breaking (or while active)
+            if (pType == PowerUpType::ShieldBubble &&
+                (ship.shieldHp > 0 || ship.shieldCooldownTimer > 0.0f)) {
+                continue;
+            }
+
+            pu.active = 0;
+
+            switch (pType) {
+                case PowerUpType::FireRateBoost:
+                    ship.fireRateTimer = Constants::POWERUP_FIRERATE_DURATION;
+                    break;
+                case PowerUpType::SpeedBoost:
+                    ship.speedBoostTimer = Constants::POWERUP_SPEED_DURATION;
+                    break;
+                case PowerUpType::Shotgun:
+                    ship.shotgunShotsLeft = Constants::POWERUP_SHOTGUN_SHOTS;
+                    break;
+                case PowerUpType::StealthImmortal:
+                    ship.stealthTimer = Constants::POWERUP_STEALTH_DURATION;
+                    break;
+                case PowerUpType::BouncyBullets:
+                    ship.bouncyShotsLeft = Constants::POWERUP_BOUNCY_SHOTS;
+                    break;
+                case PowerUpType::ExtraLife:
+                    if (ship.hp < Constants::SHIP_MAX_HP) {
+                        ship.hp += 1;
+                    }
+                    break;
+                case PowerUpType::FullAmmo:
+                    ship.ammo               = 1.0f;
+                    ship.ammoOverheated     = 0;
+                    ship.overheatSmokeTimer = 0.0f;
+                    break;
+                case PowerUpType::RadialBurst:
+                    ship.radialShotsLeft = Constants::POWERUP_RADIAL_SHOTS;
+                    break;
+                case PowerUpType::ShieldBubble:
+                    ship.shieldHp = Constants::POWERUP_SHIELD_HP;
+                    break;
+                case PowerUpType::EnemySlow:
+                    m_state.enemySlowTimer = Constants::POWERUP_ENEMY_SLOW_DURATION;
+                    break;
+                case PowerUpType::EnemyFireSlow:
+                    m_state.enemyFireSlowTimer = Constants::POWERUP_ENEMY_FSLOW_DURATION;
+                    break;
+                case PowerUpType::EnemyKillRandom: {
+                    std::vector<int> candidates;
+                    for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
+                        if (m_state.enemies[e].active && m_state.enemies[e].allyTimer <= 0.0f) {
+                            candidates.push_back(e);
+                        }
+                    }
+                    if (!candidates.empty()) {
+                        std::uniform_int_distribution<size_t> pick(0, candidates.size() - 1);
+                        const int idx = candidates[pick(m_rng)];
+                        EnemyState& victim = m_state.enemies[idx];
+                        victim.active = 0;
+                        if (victim.isBoss) {
+                            m_state.bossActive = 0;
+                        }
+                        if (m_state.waveRemainingKills > 0) {
+                            m_state.waveRemainingKills -= 1;
+                        }
+                        ship.score += victim.isBoss ? 5 : 1;
+                    }
+                    break;
+                }
+                case PowerUpType::EnemyAlly: {
+                    std::vector<int> normalHostiles;
+                    std::vector<int> anyHostiles;
+                    for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
+                        if (m_state.enemies[e].active && m_state.enemies[e].allyTimer <= 0.0f) {
+                            anyHostiles.push_back(e);
+                            if (!m_state.enemies[e].isBoss) {
+                                normalHostiles.push_back(e);
+                            }
+                        }
+                    }
+                    const auto& pool = !normalHostiles.empty() ? normalHostiles : anyHostiles;
+                    if (!pool.empty()) {
+                        std::uniform_int_distribution<size_t> pick(0, pool.size() - 1);
+                        m_state.enemies[pool[pick(m_rng)]].allyTimer = Constants::POWERUP_ENEMY_ALLY_DURATION;
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+            break;
         }
     }
 
-    // 3. Bullet-vs-Comet collision (dense comet core absorbs projectiles)
+    // 3. Bullet-vs-Comet collision (disappears after 3 player shots)
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         BulletState& bullet = m_state.bullets[i];
         if (!bullet.active) {
             continue;
         }
         for (int c = 0; c < Constants::MAX_COMETS; ++c) {
-            const CometState& comet = m_state.comets[c];
+            CometState& comet = m_state.comets[c];
             if (!comet.active) {
                 continue;
             }
             if (checkCircleOverlap(bullet.x, bullet.y, Constants::BULLET_RADIUS,
                                    comet.x, comet.y, comet.radius)) {
                 bullet.active = 0;
+                comet.hp -= 1;
+                if (comet.hp <= 0) {
+                    comet.active = 0;
+                }
                 break;
             }
         }
     }
 
-    // 4. Comet-vs-Ship collision (hazards deal 1 HP damage unless ship is immortal via Power-Up #4)
+    // 4. Comet-vs-Ship collision
     for (int c = 0; c < Constants::MAX_COMETS; ++c) {
         CometState& comet = m_state.comets[c];
         if (!comet.active) {
@@ -775,67 +1271,164 @@ void Simulation::resolveCollisions() {
                                    targetShip.x, targetShip.y, Constants::SHIP_RADIUS)) {
                 comet.active = 0;
 
+                float knockVx = 0.0f;
+                float knockVy = 0.0f;
                 const float cSpeed = std::sqrt(comet.vx * comet.vx + comet.vy * comet.vy);
                 if (cSpeed > 0.001f) {
-                    targetShip.vx += (comet.vx / cSpeed) * Constants::COMET_HIT_KNOCKBACK;
-                    targetShip.vy += (comet.vy / cSpeed) * Constants::COMET_HIT_KNOCKBACK;
+                    knockVx = (comet.vx / cSpeed) * Constants::COMET_HIT_KNOCKBACK;
+                    knockVy = (comet.vy / cSpeed) * Constants::COMET_HIT_KNOCKBACK;
                 }
 
-                targetShip.hp -= 1;
-                if (targetShip.hp <= 0) {
-                    const int winnerId = (targetId == 0) ? 1 : 0;
-                    m_state.ships[winnerId].score += 1;
-                    m_state.lastRoundWinner = static_cast<uint8_t>(winnerId);
-                    m_state.roundBannerTimer = Constants::ROUND_BANNER_DURATION;
-                    resetRound();
-                    return;
+                if (applyDamageToShip(targetId, knockVx, knockVy)) {
+                    handlePlayerDefeat(targetId);
+                    if (m_state.gameMode == static_cast<uint8_t>(GameMode::PvP)) {
+                        return;
+                    }
                 }
                 break;
             }
         }
     }
 
-    // 5. Bullet-vs-Ship circle collision & HP tracking (ignores immortal ships via Power-Up #4)
+    // 5. Enemy-vs-Player contact collision (Co-op)
+    if (m_state.gameMode == static_cast<uint8_t>(GameMode::CoopWaves)) {
+        for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
+            EnemyState& enemy = m_state.enemies[e];
+            if (!enemy.active || enemy.allyTimer > 0.0f) {
+                continue;
+            }
+            const float eRadius = enemy.isBoss ? Constants::ENEMY_BOSS_RADIUS : Constants::ENEMY_RADIUS;
+
+            for (int targetId = 0; targetId < Constants::MAX_PLAYERS; ++targetId) {
+                ShipState& ship = m_state.ships[targetId];
+                if (!ship.active || ship.stealthTimer > 0.0f || m_contactCooldowns[targetId] > 0.0f) {
+                    continue;
+                }
+                if (checkCircleOverlap(enemy.x, enemy.y, eRadius,
+                                       ship.x, ship.y, Constants::SHIP_RADIUS)) {
+                    float dx = ship.x - enemy.x;
+                    float dy = ship.y - enemy.y;
+                    float dist = std::sqrt(dx * dx + dy * dy);
+                    if (dist < 0.001f) {
+                        dx = 1.0f;
+                        dy = 0.0f;
+                        dist = 1.0f;
+                    }
+                    const float nx = dx / dist;
+                    const float ny = dy / dist;
+                    enemy.vx -= nx * 160.0f;
+                    enemy.vy -= ny * 160.0f;
+                    m_contactCooldowns[targetId] = 0.75f;
+
+                    if (applyDamageToShip(targetId, nx * 240.0f, ny * 240.0f)) {
+                        handlePlayerDefeat(targetId);
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. Bullet-vs-Enemy & Bullet-vs-Ship collisions
+    const bool isCoop = (m_state.gameMode == static_cast<uint8_t>(GameMode::CoopWaves));
+
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
         BulletState& bullet = m_state.bullets[i];
         if (!bullet.active) {
             continue;
         }
 
+        // 6a. Player bullets (0,1) & Ally Enemy bullets (3) can hit hostile enemies
+        if (isCoop && (bullet.ownerId == 0 || bullet.ownerId == 1 || bullet.ownerId == 3)) {
+            bool hitEnemy = false;
+            for (int e = 0; e < Constants::MAX_ENEMIES; ++e) {
+                EnemyState& enemy = m_state.enemies[e];
+                if (!enemy.active || enemy.allyTimer > 0.0f) {
+                    continue;
+                }
+                const float eRadius = enemy.isBoss ? Constants::ENEMY_BOSS_RADIUS : Constants::ENEMY_RADIUS;
+                if (checkCircleOverlap(bullet.x, bullet.y, Constants::BULLET_RADIUS,
+                                       enemy.x, enemy.y, eRadius)) {
+                    bullet.active = 0;
+                    enemy.hp -= 1;
+                    if (enemy.hp <= 0) {
+                        enemy.active = 0;
+                        if (enemy.isBoss) {
+                            m_state.bossActive = 0;
+                        }
+                        if (m_state.waveRemainingKills > 0) {
+                            m_state.waveRemainingKills -= 1;
+                        }
+                        if (bullet.ownerId < Constants::MAX_PLAYERS) {
+                            m_state.ships[bullet.ownerId].score += enemy.isBoss ? 5 : 1;
+                        }
+                    }
+                    hitEnemy = true;
+                    break;
+                }
+            }
+            if (hitEnemy) {
+                continue;
+            }
+        }
+
+        // 6b. Ally Enemy bullets (ownerId == 3) never hit players
+        if (bullet.ownerId == 3) {
+            continue;
+        }
+
         for (int targetId = 0; targetId < Constants::MAX_PLAYERS; ++targetId) {
-            // Friendly fire prevention: bullets only hit the opponent
+            // Do not hit yourself
             if (bullet.ownerId == static_cast<uint8_t>(targetId)) {
                 continue;
             }
 
             ShipState& targetShip = m_state.ships[targetId];
-            if (!targetShip.active || targetShip.stealthTimer > 0.0f) {
+            if (!targetShip.active) {
+                continue;
+            }
+
+            // Co-op Friendly-Fire Healing: shooting your friend twice restores +1 HP!
+            if (isCoop && bullet.ownerId < Constants::MAX_PLAYERS) {
+                if (targetShip.stealthTimer > 0.0f) {
+                    continue;
+                }
+                if (checkCircleOverlap(bullet.x, bullet.y, Constants::BULLET_RADIUS,
+                                       targetShip.x, targetShip.y, Constants::SHIP_RADIUS)) {
+                    bullet.active = 0;
+                    targetShip.allyHealHits += 1;
+                    if (targetShip.allyHealHits >= Constants::ALLY_HEAL_SHOTS_REQUIRED) {
+                        targetShip.allyHealHits = 0;
+                        if (targetShip.hp < Constants::SHIP_MAX_HP) {
+                            targetShip.hp += 1;
+                        }
+                    }
+                    break;
+                }
+                continue;
+            }
+
+            // Damage against player (PvP opponent bullet OR Co-op enemy bullet)
+            if (targetShip.stealthTimer > 0.0f) {
                 continue;
             }
 
             if (checkCircleOverlap(bullet.x, bullet.y, Constants::BULLET_RADIUS,
                                    targetShip.x, targetShip.y, Constants::SHIP_RADIUS)) {
-                // Deactivate bullet on impact
                 bullet.active = 0;
 
-                // Apply knockback in direction of bullet travel
+                float knockVx = 0.0f;
+                float knockVy = 0.0f;
                 const float bSpeed = std::sqrt(bullet.vx * bullet.vx + bullet.vy * bullet.vy);
                 if (bSpeed > 0.001f) {
-                    targetShip.vx += (bullet.vx / bSpeed) * Constants::BULLET_HIT_KNOCKBACK;
-                    targetShip.vy += (bullet.vy / bSpeed) * Constants::BULLET_HIT_KNOCKBACK;
+                    knockVx = (bullet.vx / bSpeed) * Constants::BULLET_HIT_KNOCKBACK;
+                    knockVy = (bullet.vy / bSpeed) * Constants::BULLET_HIT_KNOCKBACK;
                 }
 
-                // Decrement HP
-                targetShip.hp -= 1;
-
-                // Round over check: when a ship hits 0 HP, increment winner's score and reset
-                if (targetShip.hp <= 0) {
-                    const int winnerId = (targetId == 0) ? 1 : 0;
-                    m_state.ships[winnerId].score += 1;
-                    m_state.lastRoundWinner = static_cast<uint8_t>(winnerId);
-                    m_state.roundBannerTimer = Constants::ROUND_BANNER_DURATION;
-                    resetRound();
-                    return;
+                if (applyDamageToShip(targetId, knockVx, knockVy)) {
+                    handlePlayerDefeat(targetId);
+                    if (m_state.gameMode == static_cast<uint8_t>(GameMode::PvP)) {
+                        return;
+                    }
                 }
                 break;
             }
