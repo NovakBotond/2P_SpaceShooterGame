@@ -55,6 +55,15 @@ namespace Constants {
     constexpr float SHOTGUN_SPREAD_ANGLE   = 0.18f;  // Radians between shotgun pellets
 
     // -------------------------------------------------------------------------
+    // Shooting Energy / Overheat Bar
+    // -------------------------------------------------------------------------
+    constexpr float AMMO_DRAIN_RATE              = 1.0f / 4.0f; // Empty in 4.0s continuous fire
+    constexpr float AMMO_BASE_RECHARGE_RATE      = 1.0f / 4.0f; // 4.0s base full recharge
+    constexpr float AMMO_FAST_RECHARGE_MULT      = 1.30f;       // +30% faster if stopped early
+    constexpr float AMMO_PUNISH_RECHARGE_MULT    = 0.50f;       // Slower recharge if emptied out
+    constexpr float AMMO_OVERHEAT_SMOKE_DURATION = 2.0f;        // Front smoke duration (sec)
+
+    // -------------------------------------------------------------------------
     // Power-Ups (Max 2 on map at once, despawn after 6 seconds)
     // -------------------------------------------------------------------------
     constexpr int   MAX_MAP_POWERUPS           = 2;     // Max simultaneous map pickups

@@ -32,6 +32,7 @@ namespace {
         s.lastRoundWinner = 255;
         for (int i = 0; i < Constants::MAX_PLAYERS; ++i) {
             s.ships[i].hp     = Constants::SHIP_MAX_HP;
+            s.ships[i].ammo   = 1.0f;
             s.ships[i].active = 1;
         }
     }

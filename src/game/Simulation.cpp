@@ -74,35 +74,41 @@ void Simulation::resetMatch() {
 void Simulation::resetRound() {
     // Player 0 (Host - Electric Cyan): Spawn on left side facing right
     ShipState& p0 = m_state.ships[0];
-    p0.x                = Constants::ARENA_WIDTH_F * 0.20f;
-    p0.y                = Constants::ARENA_HEIGHT_F * 0.50f;
-    p0.vx               = 0.0f;
-    p0.vy               = 0.0f;
-    p0.angle            = 0.0f;
-    p0.hp               = Constants::SHIP_MAX_HP;
-    p0.fireRateTimer    = 0.0f;
-    p0.speedBoostTimer  = 0.0f;
-    p0.stealthTimer     = 0.0f;
-    p0.shotgunShotsLeft = 0;
-    p0.bouncyShotsLeft  = 0;
-    p0.isThrusting      = 0;
-    p0.active           = 1;
+    p0.x                  = Constants::ARENA_WIDTH_F * 0.20f;
+    p0.y                  = Constants::ARENA_HEIGHT_F * 0.50f;
+    p0.vx                 = 0.0f;
+    p0.vy                 = 0.0f;
+    p0.angle              = 0.0f;
+    p0.hp                 = Constants::SHIP_MAX_HP;
+    p0.ammo               = 1.0f;
+    p0.overheatSmokeTimer = 0.0f;
+    p0.fireRateTimer      = 0.0f;
+    p0.speedBoostTimer    = 0.0f;
+    p0.stealthTimer       = 0.0f;
+    p0.shotgunShotsLeft   = 0;
+    p0.bouncyShotsLeft    = 0;
+    p0.ammoOverheated     = 0;
+    p0.isThrusting        = 0;
+    p0.active             = 1;
 
     // Player 1 (Client - Neon Magenta): Spawn on right side facing left
     ShipState& p1 = m_state.ships[1];
-    p1.x                = Constants::ARENA_WIDTH_F * 0.80f;
-    p1.y                = Constants::ARENA_HEIGHT_F * 0.50f;
-    p1.vx               = 0.0f;
-    p1.vy               = 0.0f;
-    p1.angle            = PI_VAL;
-    p1.hp               = Constants::SHIP_MAX_HP;
-    p1.fireRateTimer    = 0.0f;
-    p1.speedBoostTimer  = 0.0f;
-    p1.stealthTimer     = 0.0f;
-    p1.shotgunShotsLeft = 0;
-    p1.bouncyShotsLeft  = 0;
-    p1.isThrusting      = 0;
-    p1.active           = 1;
+    p1.x                  = Constants::ARENA_WIDTH_F * 0.80f;
+    p1.y                  = Constants::ARENA_HEIGHT_F * 0.50f;
+    p1.vx                 = 0.0f;
+    p1.vy                 = 0.0f;
+    p1.angle              = PI_VAL;
+    p1.hp                 = Constants::SHIP_MAX_HP;
+    p1.ammo               = 1.0f;
+    p1.overheatSmokeTimer = 0.0f;
+    p1.fireRateTimer      = 0.0f;
+    p1.speedBoostTimer    = 0.0f;
+    p1.stealthTimer       = 0.0f;
+    p1.shotgunShotsLeft   = 0;
+    p1.bouncyShotsLeft    = 0;
+    p1.ammoOverheated     = 0;
+    p1.isThrusting        = 0;
+    p1.active             = 1;
 
     // Clear all active projectiles
     for (int i = 0; i < Constants::MAX_BULLETS; ++i) {
@@ -251,6 +257,26 @@ void Simulation::stepShipPhysics(ShipState& ship, const InputPacket& input, floa
     ship.x += ship.vx * dt;
     ship.y += ship.vy * dt;
     clampAndBounceShip(ship);
+
+    // Shooting energy / overheat bar state update
+    if (ship.overheatSmokeTimer > 0.0f) {
+        ship.overheatSmokeTimer = std::max(0.0f, ship.overheatSmokeTimer - dt);
+    } else if (input.shoot && ship.stealthTimer <= 0.0f) {
+        ship.ammo -= Constants::AMMO_DRAIN_RATE * dt;
+        if (ship.ammo <= 0.0f) {
+            ship.ammo = 0.0f;
+            ship.overheatSmokeTimer = Constants::AMMO_OVERHEAT_SMOKE_DURATION;
+            ship.ammoOverheated = 1;
+        }
+    } else {
+        const float rechargeMult = ship.ammoOverheated
+            ? Constants::AMMO_PUNISH_RECHARGE_MULT
+            : Constants::AMMO_FAST_RECHARGE_MULT;
+        ship.ammo = std::min(1.0f, ship.ammo + Constants::AMMO_BASE_RECHARGE_RATE * rechargeMult * dt);
+        if (ship.ammo >= 1.0f) {
+            ship.ammoOverheated = 0;
+        }
+    }
 }
 
 void Simulation::extrapolateVisuals(GameState& state,
@@ -378,10 +404,14 @@ void Simulation::updateShip(int playerId, const InputPacket& input, float dt) {
         m_fireCooldowns[playerId] = std::max(0.0f, m_fireCooldowns[playerId] - dt);
     }
 
+    const bool canFire = (ship.stealthTimer <= 0.0f &&
+                          ship.overheatSmokeTimer <= 0.0f &&
+                          ship.ammo > 0.0f);
+
     stepShipPhysics(ship, input, dt);
 
-    // Weapon firing (Spacebar) — blocked while Stealth/Immortal power-up (#4) is active
-    if (input.shoot && m_fireCooldowns[playerId] <= 0.0f && ship.stealthTimer <= 0.0f) {
+    // Weapon firing (Spacebar) — blocked while Stealth/Immortal or Overheated
+    if (input.shoot && m_fireCooldowns[playerId] <= 0.0f && canFire) {
         const bool isBouncy = (ship.bouncyShotsLeft > 0);
         if (isBouncy) {
             ship.bouncyShotsLeft -= 1;
@@ -591,7 +621,7 @@ void Simulation::spawnPowerUp() {
         }
     }
 
-    std::uniform_int_distribution<int> typeDist(1, 6);
+    std::uniform_int_distribution<int> typeDist(1, 7);
     const uint8_t randomType = static_cast<uint8_t>(typeDist(m_rng));
 
     PowerUpState& pu = m_state.powerUps[slot];
@@ -697,6 +727,11 @@ void Simulation::resolveCollisions() {
                         if (ship.hp < Constants::SHIP_MAX_HP) {
                             ship.hp += 1;
                         }
+                        break;
+                    case PowerUpType::FullAmmo:
+                        ship.ammo               = 1.0f;
+                        ship.ammoOverheated     = 0;
+                        ship.overheatSmokeTimer = 0.0f;
                         break;
                     default:
                         break;

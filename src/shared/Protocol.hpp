@@ -22,7 +22,8 @@ enum class PowerUpType : uint8_t {
     Shotgun         = 3, // 3. Next 3 shots are shotgun shots (3 bullets)
     StealthImmortal = 4, // 4. Invisible & immortal for 6 sec (cannot fire)
     BouncyBullets   = 5, // 5. Next 6 shots bounce off walls until 5s decay
-    ExtraLife       = 6  // 6. Restore +1 HP (capped at 3 max HP; still consumable at 3 HP)
+    ExtraLife       = 6, // 6. Restore +1 HP (capped at 3 max HP; still consumable at 3 HP)
+    FullAmmo        = 7  // 7. Instant full shooting bar & clears overheat
 };
 
 #pragma pack(push, 1)
@@ -45,20 +46,23 @@ struct InputPacket {
 // Authoritative Per-Ship State
 // -----------------------------------------------------------------------------
 struct ShipState {
-    float   x                = 0.0f;
-    float   y                = 0.0f;
-    float   vx               = 0.0f;
-    float   vy               = 0.0f;
-    float   angle            = 0.0f; // Facing angle in radians
-    int32_t hp               = Constants::SHIP_MAX_HP;
-    int32_t score            = 0;
-    float   fireRateTimer    = 0.0f; // > 0: +30% fire rate
-    float   speedBoostTimer  = 0.0f; // > 0: +30% max speed & thrust
-    float   stealthTimer     = 0.0f; // > 0: invisible, immortal, cannot fire
-    uint8_t shotgunShotsLeft = 0;    // Remaining 3-bullet spread shots
-    uint8_t bouncyShotsLeft  = 0;    // Remaining 5s wall-bouncing shots
-    uint8_t isThrusting      = 0;
-    uint8_t active           = 1;
+    float   x                  = 0.0f;
+    float   y                  = 0.0f;
+    float   vx                 = 0.0f;
+    float   vy                 = 0.0f;
+    float   angle              = 0.0f; // Facing angle in radians
+    int32_t hp                 = Constants::SHIP_MAX_HP;
+    int32_t score              = 0;
+    float   ammo               = 1.0f; // 1.0 = full (4s fire), 0.0 = empty
+    float   overheatSmokeTimer = 0.0f; // > 0: front cannon smokes for 2s & jammed
+    float   fireRateTimer      = 0.0f; // > 0: +30% fire rate
+    float   speedBoostTimer    = 0.0f; // > 0: +30% max speed & thrust
+    float   stealthTimer       = 0.0f; // > 0: invisible, immortal, cannot fire
+    uint8_t shotgunShotsLeft   = 0;    // Remaining 3-bullet spread shots
+    uint8_t bouncyShotsLeft    = 0;    // Remaining 5s wall-bouncing shots
+    uint8_t ammoOverheated     = 0;    // 1 = emptied out -> slower recharge punishment
+    uint8_t isThrusting        = 0;
+    uint8_t active             = 1;
 };
 
 // -----------------------------------------------------------------------------
